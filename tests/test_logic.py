@@ -11,7 +11,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 import json  # noqa: E402
 
-from sofa import adblock, cursors, gamepad, phone  # noqa: E402
+from sofa import adblock, cursors, gamepad, phone, player  # noqa: E402
 from sofa.browser import looks_like_url, to_url  # noqa: E402
 from sofa.db import Db, host_of, pretty_host, site_of  # noqa: E402
 from sofa.prefs import ENGINES, Prefs  # noqa: E402
@@ -203,6 +203,35 @@ class PhoneTest(unittest.TestCase):
         self.assertEqual(codes, [403] * 5 + [429])
         self.assertEqual(srv.admit("192.168.1.9", "a" * 32)[0], 429)   # locked out, even with the token
         self.assertIsNone(srv.admit("192.168.1.10", "a" * 32))
+
+
+class PlayerTest(unittest.TestCase):
+    class Cookie:
+        def __init__(self, name, value):
+            self.name, self.value = name, value
+
+        def get_name(self):
+            return self.name
+
+        def get_value(self):
+            return self.value
+
+    def test_cookie_header_is_a_private_file(self):
+        with tempfile.TemporaryDirectory() as d:
+            old = os.environ.get("XDG_CACHE_HOME")
+            os.environ["XDG_CACHE_HOME"] = d
+            try:
+                path = player._header_conf([self.Cookie("sid", "a,b é"), self.Cookie("x", "y\r\nEvil: 1")])
+            finally:
+                if old is None:
+                    del os.environ["XDG_CACHE_HOME"]
+                else:
+                    os.environ["XDG_CACHE_HOME"] = old
+            self.assertEqual(os.stat(path).st_mode & 0o777, 0o600)
+            with open(path, encoding="utf-8") as f:
+                line = f.read()
+            header = "Cookie: sid=a,b é; x=yEvil: 1"
+            self.assertEqual(line, f"http-header-fields-append=%{len(header.encode())}%{header}\n")
 
 
 class GamePadTest(unittest.TestCase):

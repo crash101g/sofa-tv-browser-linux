@@ -99,6 +99,20 @@ def _cookie_file(cookies) -> str:
     return path
 
 
+def _header_conf(cookies) -> str:
+    """
+    The page's cookies as an mpv config file holding the Cookie header, readable only by the user. mpv loads it with
+    --include, so the cookies stay off the command line, where any program on this computer could read them.
+    """
+    header = "Cookie: " + "; ".join(f"{c.get_name()}={c.get_value() or ''}" for c in cookies)
+    header = header.replace("\r", "").replace("\n", "")
+    fd, path = tempfile.mkstemp(prefix="sofa-headers-", suffix=".conf", dir=paths.sub(paths.cache_dir(), "tmp"))
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        # %n% quotes exactly n bytes, and -append adds one item, so nothing in the value needs escaping.
+        f.write(f"http-header-fields-append=%{len(header.encode('utf-8'))}%{header}\n")
+    return path
+
+
 class Player:
     """Runs one external player at a time and reports how it ended."""
 
@@ -180,8 +194,9 @@ class Player:
             if direct:
                 argv.append("--ytdl=no")
                 if cookies:
-                    header = "; ".join(f"{c.get_name()}={c.get_value()}" for c in cookies)
-                    argv.append(f"--http-header-fields=Cookie: {header.replace(',', '%2C')}")
+                    path = _header_conf(cookies)
+                    self._tmp.append(path)
+                    argv.append(f"--include={path}")
                 for t in subtitles:
                     if t.get("src", "").startswith(("http://", "https://")):
                         argv.append(f"--sub-file={t['src']}")

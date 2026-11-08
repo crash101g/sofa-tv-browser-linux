@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Name=Sofa TV Browser
+GenericName=TV Web Browser
+Comment=A private web browser made to be used from the sofa, with a remote or a game pad
+Exec=sofa-tv-browser %U
+Icon=app.sofabrowser.linux
+Terminal=false
+Categories=Network;WebBrowser;AudioVideo;Video;
+Keywords=browser;tv;remote;couch;sofa;htpc;video;
+MimeType=text/html;x-scheme-handler/http;x-scheme-handler/https;
+StartupNotify=true
+StartupWMClass=app.sofabrowser.linux

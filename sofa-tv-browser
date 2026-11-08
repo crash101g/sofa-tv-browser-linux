@@ -1,0 +1,5 @@
+#!/bin/sh
+# Sofa TV Browser for Linux: run from the source folder, or from where install.sh put it.
+HERE="$(dirname "$(readlink -f "$0")")"
+export PYTHONPATH="$HERE${PYTHONPATH:+:$PYTHONPATH}"
+exec python3 -m sofa "$@"

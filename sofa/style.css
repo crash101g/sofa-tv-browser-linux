@@ -1,0 +1,171 @@
+/* Sofa TV Browser for Linux: a 10-foot interface. Sizes are in em; Settings → Interface size scales them all. */
+
+window.sofa {
+  background-color: @window_bg_color;
+}
+
+.sofa-home {
+  padding: 2.4em 4em;
+}
+
+.sofa-search-pill {
+  min-height: 3.2em;
+  border-radius: 999px;
+  padding: 0 1.6em;
+  font-size: 1.15em;
+}
+
+.sofa-search-pill label {
+  opacity: 0.75;
+}
+
+.sofa-section-title {
+  font-size: 1.15em;
+  font-weight: 700;
+  opacity: 0.8;
+  margin-top: 1.4em;
+  margin-bottom: 0.4em;
+}
+
+.sofa-tile {
+  min-width: 11em;
+  min-height: 8em;
+  padding: 0.8em;
+  border-radius: 1em;
+}
+
+.sofa-tile-letter {
+  font-size: 2.4em;
+  font-weight: 800;
+  color: white;
+  border-radius: 0.5em;
+  min-width: 1.8em;
+  min-height: 1.8em;
+}
+
+.sofa-tile-title {
+  font-weight: 600;
+}
+
+.sofa-tile-host {
+  opacity: 0.6;
+  font-size: 0.85em;
+}
+
+.sofa-tab {
+  border-radius: 0.8em;
+  padding: 0.15em 0.3em 0.15em 0.2em;
+  background-color: alpha(currentColor, 0.07);
+}
+
+.sofa-tab-current {
+  background-color: alpha(@accent_bg_color, 0.45);
+}
+
+.sofa-current-tab {
+  box-shadow: inset 0 -0.25em 0 @accent_color;
+}
+
+button:focus-visible,
+button:focus,
+.sofa-tile:focus,
+row:focus {
+  outline: 0.18em solid @accent_color;
+  outline-offset: 0.12em;
+}
+
+.sofa-sheet {
+  background-color: alpha(@window_bg_color, 0.72);
+  border-radius: 0 0 1em 1em;
+  padding: 1.2em 3em 1.6em 3em;
+  box-shadow: 0 0.2em 1.6em alpha(black, 0.4);
+}
+
+.sofa-address {
+  min-height: 2.8em;
+  border-radius: 999px;
+  padding: 0 1.4em;
+}
+
+.sofa-action {
+  min-width: 6.4em;
+  padding: 0.6em 0.3em;
+  border-radius: 0.8em;
+}
+
+.sofa-action image {
+  -gtk-icon-size: 2em;
+}
+
+.sofa-action label {
+  font-size: 0.85em;
+}
+
+.sofa-action.off image {
+  opacity: 0.4;
+}
+
+.sofa-overlay-panel {
+  background-color: alpha(@window_bg_color, 0.98);
+  border-radius: 1.2em;
+  padding: 1.6em;
+  box-shadow: 0 0.2em 2em alpha(black, 0.5);
+}
+
+.sofa-search-entry {
+  font-size: 1.3em;
+  min-height: 2.6em;
+  border-radius: 999px;
+  padding: 0 1em;
+}
+
+.sofa-suggestion {
+  padding: 0.6em 1em;
+  font-size: 1.1em;
+}
+
+.sofa-progress {
+  min-height: 0.25em;
+}
+
+.sofa-progress trough,
+.sofa-progress progress {
+  min-height: 0.25em;
+}
+
+.sofa-page {
+  padding: 2em 4em;
+}
+
+.sofa-page-title {
+  font-size: 1.8em;
+  font-weight: 800;
+}
+
+.sofa-list row {
+  padding: 0.6em 1em;
+}
+
+.sofa-row-title {
+  font-weight: 600;
+}
+
+.sofa-row-sub {
+  opacity: 0.6;
+  font-size: 0.85em;
+}
+
+.sofa-findbar {
+  background-color: alpha(@window_bg_color, 0.97);
+  border-radius: 0 0 1em 1em;
+  padding: 0.8em 1.6em;
+  box-shadow: 0 0.2em 1.2em alpha(black, 0.4);
+}
+
+.sofa-engine-row {
+  padding: 0.8em 1.2em;
+}
+
+.sofa-hint {
+  opacity: 0.6;
+}

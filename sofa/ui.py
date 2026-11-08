@@ -721,7 +721,7 @@ class ListPage(Gtk.Box):
         row.cancel = Gtk.Button.new_from_icon_name("process-stop-symbolic")
         row.cancel.add_css_class("flat")
         row.cancel.set_tooltip_text("Cancel")
-        row.cancel.connect("clicked", lambda _b: row.download and row.download.cancel())
+        row.cancel.connect("clicked", lambda _b: row.download and self.app.cancel_download(row.download))
         box.append(row.cancel)
         rm = Gtk.Button.new_from_icon_name("user-trash-symbolic")
         rm.add_css_class("flat")
@@ -766,7 +766,7 @@ class ListPage(Gtk.Box):
             db.remove_bookmark(row.key)
         else:
             if row.download:
-                row.download.cancel()
+                self.app.cancel_download(row.download)
             db.remove_download(row.key)
         self.list.remove(row)
 
@@ -799,15 +799,18 @@ def _size(n):
     return str(n)
 
 
-def alert(parent, heading, body, responses, on_done, destructive=None, extra=None, on_closed=None):
-    """A dialog with a button per response; [on_done](response id). Escape or Back answers the first."""
+def alert(parent, heading, body, responses, on_done, destructive=None, extra=None, on_closed=None, default=None):
+    """
+    A dialog with a button per response; [on_done](response id). Escape or Back answers the first. Enter answers
+    [default]: the destructive response's opposite, or else the last.
+    """
     d = Adw.AlertDialog(heading=heading, body=body or "")
     for rid, text in responses:
         d.add_response(rid, text)
     if destructive:
         d.set_response_appearance(destructive, Adw.ResponseAppearance.DESTRUCTIVE)
     d.set_close_response(responses[0][0])
-    d.set_default_response(responses[-1][0] if not destructive else responses[0][0])
+    d.set_default_response(default or (responses[-1][0] if not destructive else responses[0][0]))
     if extra is not None:
         d.set_extra_child(extra)
     d.connect("response", lambda _d, r: on_done(r))

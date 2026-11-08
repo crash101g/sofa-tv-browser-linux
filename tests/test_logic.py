@@ -131,6 +131,79 @@ class AdBlockTest(unittest.TestCase):
             self.assertFalse(adblock.valid_selector(bad), bad)
 
 
+    def test_lists_only_over_https(self):
+        import urllib.request
+        blocker = adblock.AdBlocker.__new__(adblock.AdBlocker)
+        self.assertFalse(blocker._download("x", "http://lists.example/list.txt"))
+
+        class Redirected:
+            def geturl(self):
+                return "http://lists.example/list.txt"
+
+            def read(self, _n):
+                raise AssertionError("read a list that came over plain HTTP")
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_a):
+                return False
+
+        real = urllib.request.urlopen
+        urllib.request.urlopen = lambda *_a, **_k: Redirected()
+        try:
+            self.assertFalse(blocker._download("x", "https://lists.example/list.txt"))
+        finally:
+            urllib.request.urlopen = real
+
+
+class PageScriptTest(unittest.TestCase):
+    """sofa/page.js: the keys its frames talk with (see "talking to other frames" there)."""
+
+    PAGE_JS = os.path.join(os.path.dirname(__file__), "..", "sofa", "page.js")
+
+    def source(self):
+        with open(self.PAGE_JS, encoding="utf-8") as f:
+            return f.read()
+
+    def test_secret_never_sent(self):
+        js = self.source()
+        # The secret is read in one place only: to make a frame's key. Every message carries a key, or nothing.
+        self.assertEqual(len(re.findall(r"\bTOKEN\b", js)), 2)  # declared, and used once
+        self.assertIn('hmac(TOKEN, "sofa-frame:" + origin)', js)
+        self.assertNotIn("token: TOKEN", js)
+        for m in re.finditer(r"postMessage\((.*)", js):
+            self.assertNotIn("TOKEN", m.group(1))
+
+    def test_hmac_matches_python(self):
+        # Run in JavaScriptCore in a helper process: it can't share a process with WebKit (see sofa/qr.py).
+        js = self.source()
+        start, end = js.index("  const K = ["), js.index("  const keys = new Map();")
+        cases = [("key", ""), ("0123456789abcdef0123456789abcdef", "sofa-frame:https://example.com"),
+                 ("k" * 64, "x" * 55), ("k" * 65, "x" * 56), ("k", "sofa-frame:https://例え.jp" + "y" * 200)]
+        program = (
+            # JavaScriptCore on its own has no TextEncoder: UTF-8 the old way.
+            "var TextEncoder = function () {}; TextEncoder.prototype.encode = function (s) {"
+            " var b = unescape(encodeURIComponent(s)), a = new Uint8Array(b.length);"
+            " for (var i = 0; i < b.length; i++) a[i] = b.charCodeAt(i); return a; };"
+            + js[start:end] + "; JSON.stringify(" + json.dumps(cases) + ".map(function (c) { return hmac(c[0], c[1]); }))")
+        helper = ("import sys, gi; gi.require_version('JavaScriptCore', '6.0'); "
+                  "from gi.repository import JavaScriptCore as J; c = J.Context(); "
+                  "v = c.evaluate(sys.stdin.read(), -1); e = c.get_exception(); "
+                  "print(e.get_message() if e else v.to_string())")
+        import subprocess
+        try:
+            out = subprocess.run([sys.executable, "-I", "-c", helper], input=program, capture_output=True, text=True,
+                                 timeout=30)
+        except OSError as e:
+            self.skipTest(str(e))
+        if "require_version" in out.stderr or "Namespace" in out.stderr:
+            self.skipTest("JavaScriptCore 6.0 is not installed")
+        import hashlib
+        import hmac
+        expected = [hmac.new(k.encode(), m.encode(), hashlib.sha256).hexdigest() for k, m in cases]
+        self.assertEqual(json.loads(out.stdout), expected, out.stderr)
+
 class PhoneTest(unittest.TestCase):
     def test_commands(self):
         self.assertEqual(phone.parse_command("m 3 -4"), ("m", 3.0, -4.0))

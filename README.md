@@ -163,7 +163,7 @@ With a firewall on, allow the port: `sudo ufw allow 8765/tcp`. If Avahi is insta
   - Settings → Filter lists turns on more, one by one: EasyList, EasyPrivacy, the uBlock Origin lists (ads,
     privacy, badware, quick fixes, unbreak, cookie notices, annoyances), AdGuard's lists, Peter Lowe's list and
     Fanboy's Annoyance. Each is downloaded from its publisher when turned on. Any other list can be added by its
-    address. The exceptions of every list in use apply to all of them, as in uBlock Origin.
+    https:// address (lists over plain HTTP could be changed on the way, so Sofa refuses them). The exceptions of every list in use apply to all of them, as in uBlock Origin.
   - Compiling takes a few seconds per list the first time (all sixteen: about a minute); later starts load them
     at once.
   - Captchas (reCAPTCHA, hCaptcha, Cloudflare Turnstile, Arkose) are never blocked, whatever a list says.
@@ -180,7 +180,8 @@ With a firewall on, allow the port: `sudo ufw allow 8765/tcp`. If Avahi is insta
 - **Page dialogs**: a page's alert, confirm and prompt boxes appear as Sofa's own dialogs, so the remote and the
   phone can answer them. A page gets two per visit; more are dismissed. "Leave this page?" never traps Back.
 - **Search** with the engine you choose at first start, with optional suggestions.
-- **Downloads** to your Downloads folder, with progress, cancel and open.
+- **Downloads** to your Downloads folder, with progress, cancel and open. A download a page starts by itself is
+  saved only after you say yes; one you choose from a link's menu just starts.
 - **Private browsing** (Home → Private) in a separate session whose cookies and data are gone when it ends.
 - **Dark and Light themes** that websites follow too, and an interface size made for a TV across the room.
 
@@ -197,7 +198,10 @@ With a firewall on, allow the port: `sudo ufw allow 8765/tcp`. If Avahi is insta
   Intelligent Tracking Prevention is on.
 - **Blending in:** Sofa uses a desktop Chrome user agent by default and sends no Do Not Track. Global Privacy
   Control can be turned on in Settings.
-- **Pages get nothing extra:** no camera, microphone, location or notifications.
+- **Pages get nothing extra:** no camera, microphone, location or notifications. A link that opens another app on
+  this computer (mailto:, magnet:, steam: and the like) asks first, naming the app.
+- **Frames stay apart:** the pointer reaches into other sites' frames, but the messages that carry it are made for
+  each frame's own site, so one site's frame can't use them to click or type into another's.
 - **History** is kept for as long as you choose: 7, 30 or 90 days (the default), always or never. Settings can
   clear all browsing data, now or every time Sofa closes.
 

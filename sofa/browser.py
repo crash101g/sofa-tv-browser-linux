@@ -13,7 +13,7 @@ import gi
 gi.require_version("Gtk", "4.0")
 gi.require_version("WebKit", "6.0")
 gi.require_version("Gdk", "4.0")
-from gi.repository import Gdk, Gio, GLib, Gtk, WebKit  # noqa: E402
+from gi.repository import Gdk, GLib, Gtk, WebKit  # noqa: E402
 
 from . import paths  # noqa: E402
 from .adblock import youtube_script, zap_sheets  # noqa: E402
@@ -111,6 +111,7 @@ class Browser:
         self.current = 0
         self.private = False
         self.saved = None           # the normal tabs while private browsing is on: (tabs, current)
+        self._own_downloads = set()  # addresses the user chose to download from Sofa's menu
         self.last_input = 0.0
         self.typed_navigation = False
         self.adblock.connect(self._filters_changed)
@@ -452,9 +453,10 @@ class Browser:
             uri = action.get_request().get_uri() or ""
             if not uri or uri.startswith(("http://", "https://", "about:", "file:", "data:", "blob:")):
                 return False
-            # Other schemes (mailto:, magnet:, …) go to the system, but only when the user pressed something.
+            # Other schemes (mailto:, magnet:, …) go to another app on this computer: only when the user pressed
+            # something, and only after asking (see ask_external).
             if self.gesture(action):
-                Gio.AppInfo.launch_default_for_uri_async(uri, None, None, None, None)
+                self.ui.ask_external(self.tab_of(view), uri)
             decision.ignore()
             return True
         if kind == WebKit.PolicyDecisionType.RESPONSE and decision.is_main_frame_main_resource():
@@ -553,8 +555,16 @@ class Browser:
         self.ui.on_download(download)
 
     def download(self, url):
+        """A download the user chose in Sofa's own menu: it isn't asked about again (see take_own_download)."""
         if self.view:
+            self._own_downloads.add(url)
             self.view.download_uri(url)
+
+    def take_own_download(self, url) -> bool:
+        if url in self._own_downloads:
+            self._own_downloads.discard(url)
+            return True
+        return False
 
     def cookies_for(self, url, cb):
         def done(cm, res):

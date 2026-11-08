@@ -660,6 +660,22 @@ class Window(Adw.ApplicationWindow):
             GLib.idle_add(lambda: entry.grab_focus() and False)
         return True
 
+    def ask_external(self, tab, uri):
+        """A page's link to another app on this computer (mailto:, magnet:, steam:, …): it opens only if the user says so."""
+        if tab is None or not self._is_current(tab):
+            return
+        scheme = uri.split(":", 1)[0].lower()
+        app = Gio.AppInfo.get_default_for_uri_scheme(scheme)
+        if app is None:
+            self.toast(f"No app on this computer opens {scheme}: links")
+            return
+        name = app.get_display_name()
+        shown = uri if len(uri) <= 160 else uri[:157] + "…"
+        self.choose(f"Open {name}?", f"{host_of(tab.uri) or 'This page'} wants to open a {scheme}: link in {name}:\n\n"
+                    f"{shown}", [("cancel", "Cancel"), ("open", f"Open {name}")],
+                    lambda r: r == "open" and Gio.AppInfo.launch_default_for_uri_async(uri, None, None, None, None),
+                    destructive="open")
+
     def ask_tls(self, tab, host, go_on):
         if not self._is_current(tab):
             return
@@ -696,9 +712,38 @@ class Window(Adw.ApplicationWindow):
 
     def on_download(self, download):
         def destination(dl, suggested):
+            """A download a page started is saved only if the user says so; one chosen in Sofa's menu just is."""
+            name = os.path.basename(suggested or "download") or "download"
+            if self.browser.take_own_download(dl.get_request().get_uri()):
+                save(dl, name)
+                return True
+            view = dl.get_web_view()
+            host = host_of(view.get_uri()) if view is not None else None
+            answered = []
+
+            def done(r):
+                # The first answer counts. Closing the dialog answers again (Cancel), and closing it without an
+                # answer (another dialog, the phone opening a page) is a Cancel too.
+                if answered:
+                    return
+                answered.append(r)
+                if r == "save":
+                    save(dl, name)
+                else:
+                    self.cancel_download(dl)
+
+            def ask():
+                d = self.choose(f"Download {name}?", f"{host or 'A page'} wants to save {name} in your Downloads "
+                                "folder.", [("cancel", "Cancel"), ("save", "Save")], done, default="cancel")
+                d.connect("closed", lambda _d: done("cancel"))
+                return False
+
+            GLib.idle_add(ask)
+            return True  # the destination comes later, from the answer
+
+        def save(dl, name):
             folder = GLib.get_user_special_dir(GLib.UserDirectory.DIRECTORY_DOWNLOAD) or os.path.expanduser("~/Downloads")
             os.makedirs(folder, exist_ok=True)
-            name = os.path.basename(suggested or "download") or "download"
             path = os.path.join(folder, name)
             base, ext = os.path.splitext(path)
             n = 1
@@ -709,7 +754,6 @@ class Window(Adw.ApplicationWindow):
             dl.sofa_id = self.db.add_download(dl.get_request().get_uri(), path)
             self.active_downloads[dl.sofa_id] = dl
             self.toast(f"Downloading {os.path.basename(path)}")
-            return True
 
         def failed(dl, error):
             i = getattr(dl, "sofa_id", None)
@@ -719,6 +763,7 @@ class Window(Adw.ApplicationWindow):
                 dl.sofa_failed = True
 
         def finished(dl):
+            dl.sofa_ended = True
             i = getattr(dl, "sofa_id", None)
             if i is None:
                 return
@@ -734,6 +779,16 @@ class Window(Adw.ApplicationWindow):
         download.connect("decide-destination", destination)
         download.connect("failed", failed)
         download.connect("finished", finished)
+
+    def cancel_download(self, dl):
+        """Stops a download, once, and not after it ended: WebKitGTK crashes on a second cancel or a late one."""
+        def cancel():
+            if not getattr(dl, "sofa_ended", False):
+                dl.sofa_ended = True
+                dl.cancel()
+            return False
+
+        GLib.idle_add(cancel)
 
     def open_file(self, path):
         Gio.AppInfo.launch_default_for_uri_async(Gio.File.new_for_path(path).get_uri(), None, None, None, None)
@@ -1614,14 +1669,15 @@ class Window(Adw.ApplicationWindow):
             self._remote("select")
 
     # Dialogs and notices
-    def choose(self, heading, body, responses, on_done, destructive=None, extra=None):
+    def choose(self, heading, body, responses, on_done, destructive=None, extra=None, default=None):
         def closed():
             if self.dialog is d:
                 self.dialog = None
             if self.page == "web" and self.browser.view and not self.search.get_visible():
                 self.browser.view.grab_focus()
 
-        d = alert(self, heading, body, responses, on_done, destructive=destructive, extra=extra, on_closed=closed)
+        d = alert(self, heading, body, responses, on_done, destructive=destructive, extra=extra, on_closed=closed,
+                  default=default)
         self.dialog = d
         return d
 

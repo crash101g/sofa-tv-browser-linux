@@ -497,9 +497,16 @@ class AdBlocker:
         GLib.idle_add(self._compile_all, jobs, domains, popups, failed)
 
     def _download(self, list_id, url) -> bool:
+        # Only over HTTPS, redirects included: over plain HTTP, anyone on the way could rewrite the list.
+        if not url.startswith("https://"):
+            print(f"sofa: not downloading {url}: lists need an https:// address")
+            return False
         try:
             req = urllib.request.Request(url, headers={"User-Agent": "Sofa TV Browser"})
             with urllib.request.urlopen(req, timeout=60) as r:
+                if not r.geturl().startswith("https://"):
+                    print(f"sofa: not downloading {url}: it redirects to {r.geturl()}, without HTTPS")
+                    return False
                 data = r.read(64 * 1024 * 1024)
             text = data.decode("utf-8", errors="replace")
             if "<html" in text[:2000].lower() or len(text) < 200:

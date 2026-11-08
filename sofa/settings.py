@@ -201,10 +201,13 @@ class Settings(Gtk.Box):
 
         def add_list(r):
             url = r.get_text().strip()
-            if url.startswith(("http://", "https://")):
+            if url.startswith("https://"):
                 a.adblock.add_custom(url)
                 a.toast("Downloading the list…")
                 self.show()
+            elif url.startswith("http://"):
+                # Over plain HTTP, anyone on the way could change what the list allows or blocks.
+                a.toast("A list needs an https:// address, so it can't be changed on the way", timeout=5)
 
         add.connect("apply", add_list)
         g.add(add)

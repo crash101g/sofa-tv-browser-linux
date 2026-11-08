@@ -118,6 +118,7 @@ DEFAULTS = {
     "current_tab": 0,
     "restore_tabs": True,
     "phone_remote": False,              # the phone page's server; off until "Pair phone"
+    "phone_plain_http": False,          # the phone page over plain HTTP, for phones that refuse Sofa's certificate
 }
 
 

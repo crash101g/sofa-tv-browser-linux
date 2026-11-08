@@ -7,8 +7,8 @@ def _missing(e):
         f"Sofa TV Browser can't start: {e}\n\n"
         "It needs GTK 4, libadwaita and WebKitGTK 6. On Pop!_OS / Ubuntu 24.04:\n"
         "  sudo apt install python3-gi gir1.2-gtk-4.0 gir1.2-adw-1 gir1.2-webkit-6.0\n"
-        "and for videos and game pads:\n"
-        "  sudo apt install mpv gir1.2-manette-0.2\n"
+        "and for videos, game pads and the phone remote:\n"
+        "  sudo apt install mpv gir1.2-manette-0.2 python3-cryptography\n"
         "(or run ./install.sh, which does all of this).\n")
     return 1
 

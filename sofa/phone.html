@@ -150,7 +150,7 @@
   const setDot = (on, label) => { $('dot').classList.toggle('on', on); $('dotLabel').textContent = label; };
   const connect = () => {
     if (ws && ws.readyState <= 1) return;
-    try { ws = new WebSocket('ws://' + location.host + '/ws?t=' + encodeURIComponent(token)); }
+    try { ws = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws?t=' + encodeURIComponent(token)); }
     catch (e) { setDot(false, 'trackpad unavailable'); return; }
     ws.onopen = () => {
       retry = 1000; failures = 0; setDot(true, 'trackpad connected');

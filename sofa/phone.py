@@ -11,11 +11,16 @@ pairing token, a 128-bit random value compared in constant time, and must come f
 computer's own subnet; programs on this computer itself are refused. Five wrong tokens from one address block it for
 ten minutes. Requests carry only an address, text, a key name or a short pointer command, never a script. The
 trackpad's WebSocket must come from the phone page itself (its Origin is checked), at most two at a time, and
-messages past 120 a second are dropped. It is plain HTTP: someone who can watch the home network's traffic could read
-the token and what is typed.
+messages past 120 a second are dropped.
+
+It is HTTPS, with a certificate Sofa makes for itself and keeps (CertStore), so someone watching the home network's
+traffic can't read the token or what is typed. No authority vouches for that certificate, so a phone warns about it
+the first time; after that it warns again only if the certificate changes. Plain HTTP is there for phones that won't
+take the certificate, when the user turns it on.
 """
 
 import base64
+import datetime
 import hashlib
 import hmac
 import http.server
@@ -27,6 +32,7 @@ import secrets
 import shutil
 import socket
 import socketserver
+import ssl
 import subprocess
 import threading
 import time
@@ -43,10 +49,15 @@ MAX_FAILURES = 5
 FAIL_WINDOW_S = 600
 BLOCK_S = 600
 KEYS = {"up", "down", "left", "right", "ok", "back", "menu", "playpause", "enter", "backspace", "watch", "home"}
+CERT_DAYS = 825                 # the longest Apple accepts for a TLS server certificate
+RENEW_DAYS = 30                 # a new certificate this long before the old one ends
 HOST_HEADER = re.compile(r"^([A-Za-z0-9.-]+(:\d{1,5})?|\[[0-9A-Fa-f:.%]+\](:\d{1,5})?)$")
 EXPIRED_PAGE = ("<!doctype html><meta name=viewport content='width=device-width'>"
                 "<body style='font:18px system-ui,sans-serif;padding:24px'>This link has expired. On the TV, open "
                 "the menu, choose <b>Phone</b> and scan the new QR code.</body>")
+UPGRADE_PAGE = ("HTTP/1.1 400 Bad Request\r\nContent-Type: text/html; charset=utf-8\r\nCache-Control: no-store\r\n"
+                "Connection: close\r\n\r\n" + EXPIRED_PAGE.replace("This link has expired", "Sofa's phone remote "
+                                                                       "now uses a secure connection")).encode("utf-8")
 PHONE_PAGE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "phone.html")
 
 # ---- the pairing token -------------------------------------------------------------------------------------------
@@ -84,6 +95,98 @@ class TokenStore:
             return False
         h = lambda s: hashlib.sha256(s.encode("utf-8", "replace")).digest()  # noqa: E731
         return hmac.compare_digest(h(candidate), h(self.token))
+
+
+class CertUnavailable(Exception):
+    """The certificate can't be made (python3-cryptography is missing) or read."""
+
+
+class CertStore:
+    """
+    The phone page's certificate and key, made once and kept in files only this user can read
+    (~/.config/sofa-tv-browser/phone-cert.pem and phone-key.pem). A phone that accepted it isn't asked again until
+    it is renewed, a month before it ends.
+    """
+
+    def __init__(self, directory: str | None = None, addresses=None):
+        d = directory or paths.config_dir()
+        self.cert_path = os.path.join(d, "phone-cert.pem")
+        self.key_path = os.path.join(d, "phone-key.pem")
+        self._addresses = addresses or (lambda: [a for _n, a, _p, loop in interfaces() if not loop])
+
+    def context(self):
+        """(an SSLContext for the server, whether the certificate is brand new). Raises CertUnavailable."""
+        created = not os.path.exists(self.cert_path)
+        if created or self._ends_soon():
+            self._make()
+        ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        ctx.minimum_version = ssl.TLSVersion.TLSv1_2
+        try:
+            ctx.load_cert_chain(self.cert_path, self.key_path)
+        except (OSError, ssl.SSLError) as e:
+            raise CertUnavailable(f"the phone remote's certificate can't be read: {e}") from e
+        return ctx, created
+
+    def _ends_soon(self) -> bool:
+        try:
+            from cryptography import x509
+        except ImportError:
+            return False  # can't renew without it: keep using the one there is
+        try:
+            with open(self.cert_path, "rb") as f:
+                cert = x509.load_pem_x509_certificate(f.read())
+        except (OSError, ValueError):
+            return True
+        ends = getattr(cert, "not_valid_after_utc", None) or \
+            cert.not_valid_after.replace(tzinfo=datetime.timezone.utc)
+        return ends - datetime.datetime.now(datetime.timezone.utc) < datetime.timedelta(days=RENEW_DAYS)
+
+    def _make(self):
+        try:
+            from cryptography import x509
+            from cryptography.hazmat.primitives import hashes, serialization
+            from cryptography.hazmat.primitives.asymmetric import ec
+            from cryptography.x509.oid import ExtendedKeyUsageOID, NameOID
+        except ImportError as e:
+            raise CertUnavailable("a secure connection needs python3-cryptography: sudo apt install "
+                                  "python3-cryptography") from e
+        key = ec.generate_private_key(ec.SECP256R1())
+        name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "Sofa TV Browser")])
+        sans, seen = [x509.DNSName("localhost")], set()
+        for a in self._addresses():
+            try:
+                ip = ipaddress.ip_address(_plain(a))
+            except ValueError:
+                continue
+            if ip not in seen and is_private(ip):
+                seen.add(ip)
+                sans.append(x509.IPAddress(ip))
+        now = datetime.datetime.now(datetime.timezone.utc)
+        cert = (x509.CertificateBuilder()
+                .subject_name(name).issuer_name(name).public_key(key.public_key())
+                .serial_number(x509.random_serial_number())
+                .not_valid_before(now - datetime.timedelta(minutes=5))
+                .not_valid_after(now + datetime.timedelta(days=CERT_DAYS))
+                .add_extension(x509.SubjectAlternativeName(sans), critical=False)
+                .add_extension(x509.BasicConstraints(ca=False, path_length=None), critical=True)
+                .add_extension(x509.ExtendedKeyUsage([ExtendedKeyUsageOID.SERVER_AUTH]), critical=False)
+                .sign(key, hashes.SHA256()))
+        key_pem = key.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8,
+                                    serialization.NoEncryption())
+        try:
+            _write_private(self.key_path, key_pem)
+            _write_private(self.cert_path, cert.public_bytes(serialization.Encoding.PEM))
+        except OSError as e:
+            raise CertUnavailable(f"the phone remote's certificate can't be saved: {e}") from e
+
+
+def _write_private(path, data: bytes):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    tmp = path + ".tmp"
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "wb") as f:
+        f.write(data)
+    os.replace(tmp, path)
 
 
 # ---- who may connect ---------------------------------------------------------------------------------------------
@@ -321,9 +424,10 @@ class _Server(socketserver.ThreadingMixIn, http.server.HTTPServer):
     allow_reuse_address = True
     request_queue_size = 8
 
-    def __init__(self, addr, family, phone):
+    def __init__(self, addr, family, phone, tls=None):
         self.address_family = family
         self.phone = phone
+        self.tls = tls
         super().__init__(addr, _Handler, bind_and_activate=False)
         if family == socket.AF_INET6:
             self.socket.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 0)
@@ -337,6 +441,31 @@ class _Server(socketserver.ThreadingMixIn, http.server.HTTPServer):
     def verify_request(self, request, client_address):
         # Anything but a device on this home network is dropped without an answer.
         return self.phone.allow_peer(client_address[0])
+
+    def finish_request(self, request, client_address):
+        # On the request's own thread, so a slow or silent phone holds up no one else.
+        if self.tls is None:
+            super().finish_request(request, client_address)
+            return
+        request.settimeout(_Handler.timeout)
+        try:
+            first = request.recv(1, socket.MSG_PEEK)
+            if first and first != b"\x16":  # not a TLS handshake: an old http:// link
+                request.recv(8192)
+                request.sendall(UPGRADE_PAGE)
+                return
+            if not first:
+                return
+            conn = self.tls.wrap_socket(request, server_side=True)
+        except (OSError, ssl.SSLError):
+            return  # a phone that turned the certificate down closes the connection here
+        try:
+            super().finish_request(conn, client_address)
+        finally:
+            try:
+                conn.close()
+            except OSError:
+                pass
 
 
 class _Handler(http.server.BaseHTTPRequestHandler):
@@ -354,7 +483,8 @@ class _Handler(http.server.BaseHTTPRequestHandler):
     def _send(self, code, ctype, body, ws_host=None):
         data = body.encode("utf-8") if isinstance(body, str) else body
         # The phone page may open its trackpad socket back to this server, and nowhere else.
-        connect = f"; connect-src 'self' ws://{ws_host}" if ws_host and HOST_HEADER.match(ws_host) else ""
+        ws = "wss" if self.phone.scheme == "https" else "ws"
+        connect = f"; connect-src 'self' {ws}://{ws_host}" if ws_host and HOST_HEADER.match(ws_host) else ""
         self.send_response(code)
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(data)))
@@ -448,7 +578,7 @@ class _Handler(http.server.BaseHTTPRequestHandler):
         """
         host, origin = self.headers.get("Host"), self.headers.get("Origin")
         if (self.headers.get("Upgrade") or "").lower() != "websocket" or \
-                self.headers.get("Sec-WebSocket-Version") != "13" or (origin and host and origin != f"http://{host}"):
+                self.headers.get("Sec-WebSocket-Version") != "13" or (origin and host and origin != f"{self.phone.scheme}://{host}"):
             self._refuse_ws(400, "Bad Request")
             return
         accept = accept_key(self.headers.get("Sec-WebSocket-Key"))
@@ -513,8 +643,14 @@ class PhoneServer:
     pointer_disconnected(); [dispatch] calls them on the main loop.
     """
 
-    def __init__(self, tokens: TokenStore, actions, dispatch, allow_peer=is_lan_peer, ports=PORTS):
+    def __init__(self, tokens: TokenStore, actions, dispatch, allow_peer=is_lan_peer, ports=PORTS, tls=None):
+        """
+        [tls] returns (an SSLContext, whether its certificate is brand new) for HTTPS, or None for plain HTTP; it may
+        raise CertUnavailable, and then the server doesn't start.
+        """
         self.tokens = tokens
+        self.tls = tls
+        self.scheme = "http"
         self.actions = actions
         self._dispatch = dispatch
         self.allow_peer = allow_peer
@@ -531,12 +667,21 @@ class PhoneServer:
         return self.server is not None
 
     def start(self) -> int:
+        """The port it listens on, or 0 if every port is taken. Raises CertUnavailable if HTTPS can't be set up."""
         if self.server:
             return self.port
+        tls = self.tls() if self.tls else None
+        ctx = None
+        if tls is not None:
+            ctx, created = tls
+            if created:
+                # The token may have crossed the network in the clear before: phones pair again over HTTPS.
+                self.tokens.rotate()
+        self.scheme = "https" if ctx else "http"
         for port in self.ports:
             for family, host in ((socket.AF_INET6, "::"), (socket.AF_INET, "0.0.0.0")):
                 try:
-                    self.server = _Server((host, port), family, self)
+                    self.server = _Server((host, port), family, self, ctx)
                 except OSError:
                     continue
                 self.port = port
@@ -546,7 +691,8 @@ class PhoneServer:
                 return port
         return 0
 
-    def stop(self):
+    def stop(self, wait=False):
+        """Stops it; with [wait], returns once the port is free again (for a restart on the same port)."""
         server, self.server, self.port = self.server, None, 0
         if server is None:
             return
@@ -557,9 +703,17 @@ class PhoneServer:
                 s.shutdown(socket.SHUT_RDWR)
             except OSError:
                 pass
-        threading.Thread(target=lambda: (server.shutdown(), server.server_close()), daemon=True).start()
+        if wait:
+            server.shutdown()
+            server.server_close()
+        else:
+            threading.Thread(target=lambda: (server.shutdown(), server.server_close()), daemon=True).start()
         if self._advertiser:
             self._advertiser.terminate()
+            try:
+                self._advertiser.wait(timeout=1)
+            except subprocess.TimeoutExpired:
+                self._advertiser.kill()
             self._advertiser = None
 
     def _advertise(self):
@@ -611,4 +765,4 @@ class PhoneServer:
         ip = lan_address()
         if not ip or not self.port:
             return None
-        return f"http://{ip}:{self.port}/?t={self.tokens.token}"
+        return f"{self.scheme}://{ip}:{self.port}/?t={self.tokens.token}"

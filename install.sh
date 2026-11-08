@@ -7,7 +7,7 @@ PREFIX="${XDG_DATA_HOME:-$HOME/.local/share}"
 BIN="$HOME/.local/bin"
 DEST="$PREFIX/sofa-tv-browser/app"
 
-PKGS="python3-gi gir1.2-gtk-4.0 gir1.2-adw-1 gir1.2-webkit-6.0 gir1.2-manette-0.2 mpv"
+PKGS="python3-gi python3-cryptography gir1.2-gtk-4.0 gir1.2-adw-1 gir1.2-webkit-6.0 gir1.2-manette-0.2 mpv"
 MISSING=""
 for p in $PKGS; do
     dpkg-query -W -f='${Status}' "$p" 2>/dev/null | grep -q "install ok installed" || MISSING="$MISSING $p"

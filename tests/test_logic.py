@@ -205,6 +205,143 @@ class PhoneTest(unittest.TestCase):
         self.assertIsNone(srv.admit("192.168.1.10", "a" * 32))
 
 
+
+class PhoneHttpsTest(unittest.TestCase):
+    """The phone server over HTTPS and plain HTTP, through real sockets on this computer."""
+
+    def setUp(self):
+        try:
+            import cryptography  # noqa: F401
+        except ImportError:
+            self.skipTest("python3-cryptography is not installed")
+        self.dir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.dir.cleanup)
+        self.calls = []
+
+    def server(self, plain=False):
+        import socket as so
+        with so.socket() as s:
+            s.bind(("127.0.0.1", 0))
+            port = s.getsockname()[1]
+        self.tokens = phone.TokenStore(os.path.join(self.dir.name, "tok"))
+        self.certs = phone.CertStore(self.dir.name, addresses=lambda: ["192.168.1.20", "127.0.0.1"])
+        srv = phone.PhoneServer(self.tokens, self, lambda fn, *a: fn(*a), allow_peer=lambda _a: True, ports=[port],
+                                tls=lambda: None if plain else self.certs.context())
+        srv._advertise = lambda: None  # no announcing tests on the network
+        self.assertEqual(srv.start(), port)
+        self.addCleanup(lambda: srv.stop(wait=True))
+        return srv
+
+    # The actions the server calls (PhoneServer's [actions]).
+    def __getattr__(self, name):
+        if name in ("open_url", "type_text", "key", "pointer", "pointer_connected", "pointer_disconnected"):
+            return lambda *a: self.calls.append((name, *a))
+        raise AttributeError(name)
+
+    def request(self, srv, method, path, body=b"", headers=None, tls=True):
+        import http.client
+        import ssl
+        if tls:
+            ctx = ssl.create_default_context()
+            ctx.check_hostname, ctx.verify_mode = False, ssl.CERT_NONE
+            c = http.client.HTTPSConnection("127.0.0.1", srv.port, context=ctx, timeout=5)
+        else:
+            c = http.client.HTTPConnection("127.0.0.1", srv.port, timeout=5)
+        c.request(method, path, body, headers or {})
+        r = c.getresponse()
+        out = r.status, dict(r.getheaders()), r.read()
+        c.close()
+        return out
+
+    def test_certificate(self):
+        from cryptography import x509
+        certs = phone.CertStore(self.dir.name, addresses=lambda: ["192.168.1.20", "8.8.8.8", "fe80::1%eth0"])
+        _ctx, created = certs.context()
+        self.assertTrue(created)
+        self.assertEqual(os.stat(certs.key_path).st_mode & 0o777, 0o600)
+        with open(certs.cert_path, "rb") as f:
+            cert = x509.load_pem_x509_certificate(f.read())
+        ips = {str(i) for i in cert.extensions.get_extension_for_class(x509.SubjectAlternativeName).value
+               .get_values_for_type(x509.IPAddress)}
+        self.assertEqual(ips, {"192.168.1.20", "fe80::1"})     # private addresses only
+        self.assertLessEqual((cert.not_valid_after - cert.not_valid_before).days, 825)
+        first = cert.serial_number
+        self.assertFalse(certs.context()[1])                  # kept, not made again
+        with open(certs.cert_path, "rb") as f:
+            self.assertEqual(x509.load_pem_x509_certificate(f.read()).serial_number, first)
+
+    def test_renewed_before_it_ends(self):
+        certs = phone.CertStore(self.dir.name, addresses=lambda: [])
+        certs.context()
+        old = phone.CERT_DAYS
+        phone.CERT_DAYS = 10
+        try:
+            os.unlink(certs.cert_path)
+            certs.context()                                    # a certificate that ends in 10 days
+        finally:
+            phone.CERT_DAYS = old
+        self.assertTrue(certs._ends_soon())
+        certs.context()
+        self.assertFalse(certs._ends_soon())
+
+    def test_https(self):
+        srv = self.server()
+        self.assertTrue(srv.url() is None or srv.url().startswith("https://"))
+        t = self.tokens.token
+        status, headers, body = self.request(srv, "GET", f"/?t={t}", headers={"Host": f"192.168.1.20:{srv.port}"})
+        self.assertEqual(status, 200)
+        self.assertIn(b"trackpad", body)
+        self.assertIn(f"connect-src 'self' wss://192.168.1.20:{srv.port}", headers["Content-Security-Policy"])
+        self.assertEqual(self.request(srv, "POST", f"/type?t={t}", "hello".encode())[0], 200)
+        self.assertEqual(self.request(srv, "POST", "/type?t=" + "0" * 32, b"no")[0], 403)
+        self.assertEqual(self.calls, [("type_text", "hello")])
+
+    def test_old_http_link_is_told_to_scan_again(self):
+        srv = self.server()
+        status, _h, body = self.request(srv, "GET", f"/?t={self.tokens.token}", tls=False)
+        self.assertEqual(status, 400)
+        self.assertIn(b"secure connection", body)
+        self.assertNotIn(b"trackpad", body)
+
+    def test_token_rotated_when_the_certificate_is_new(self):
+        before = phone.TokenStore(os.path.join(self.dir.name, "tok")).token
+        self.server()
+        self.assertNotEqual(self.tokens.token, before)
+
+    def test_trackpad_over_wss(self):
+        import socket as so
+        import ssl
+        srv = self.server()
+        ctx = ssl.create_default_context()
+        ctx.check_hostname, ctx.verify_mode = False, ssl.CERT_NONE
+        host = f"127.0.0.1:{srv.port}"
+        with ctx.wrap_socket(so.create_connection(("127.0.0.1", srv.port), timeout=5)) as s:
+            for origin, ok in ((f"http://{host}", False), (f"https://{host}", True)):
+                if not ok:
+                    with ctx.wrap_socket(so.create_connection(("127.0.0.1", srv.port), timeout=5)) as bad:
+                        bad.sendall((f"GET /ws?t={self.tokens.token} HTTP/1.1\r\nHost: {host}\r\nOrigin: {origin}\r\n"
+                                     "Upgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Version: 13\r\n"
+                                     "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n").encode())
+                        self.assertIn(b" 400 ", bad.recv(200))
+                    continue
+                s.sendall((f"GET /ws?t={self.tokens.token} HTTP/1.1\r\nHost: {host}\r\nOrigin: {origin}\r\n"
+                           "Upgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Version: 13\r\n"
+                           "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n").encode())
+                self.assertIn(b" 101 ", s.recv(200))
+                mask = b"\x01\x02\x03\x04"
+                s.sendall(bytes([0x81, 0x80 | 1]) + mask + bytes([ord("p") ^ mask[0]]))
+                self.assertEqual(s.recv(10), b"\x81\x01p")       # the keep-alive's answer, encrypted both ways
+        self.assertIn(("pointer_connected",), self.calls)
+
+    def test_plain_http_when_chosen(self):
+        srv = self.server(plain=True)
+        self.assertEqual(srv.scheme, "http")
+        status, headers, _b = self.request(srv, "GET", f"/?t={self.tokens.token}", tls=False,
+                                           headers={"Host": f"192.168.1.20:{srv.port}"})
+        self.assertEqual(status, 200)
+        self.assertIn("ws://192.168.1.20", headers["Content-Security-Policy"])
+        self.assertFalse(os.path.exists(os.path.join(self.dir.name, "phone-cert.pem")))
+
 class PlayerTest(unittest.TestCase):
     class Cookie:
         def __init__(self, name, value):

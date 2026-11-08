@@ -263,9 +263,19 @@ class Settings(Gtk.Box):
         self._button(g, "Pair phone", "Shows the QR code to scan", "Show", a.show_pairing)
         self._button(g, "Forget paired phones", "A new QR code: phones paired before stop working", "Forget",
                      a.forget_phones)
-        g.add(Adw.ActionRow(title="It is plain HTTP on your home network",
-                            subtitle="Someone who can watch your network's traffic could read what you type with it. "
-                                     "If you use a firewall: sudo ufw allow 8765/tcp"))
+        self._switch(g, "phone_plain_http", "Plain HTTP (less safe)",
+                     "Only for a phone or Shortcut that won't accept Sofa's certificate. Someone watching your "
+                     "network's traffic could read what you type with it", after=lambda: (a.phone_security_changed(),
+                                                                                         self.show()))
+        if p.phone_plain_http:
+            g.add(Adw.ActionRow(title="It is plain HTTP on your home network",
+                                subtitle="If you use a firewall: sudo ufw allow 8765/tcp"))
+        else:
+            g.add(Adw.ActionRow(title="A secure connection, with Sofa's own certificate",
+                                subtitle="The phone warns once that the connection isn't private: no authority vouches "
+                                         "for the certificate, so that's expected. If it warns again after that, "
+                                         "Sofa made a new certificate, which it does every two years. "
+                                         "If you use a firewall: sudo ufw allow 8765/tcp"))
         page.add(g)
 
         g = Adw.PreferencesGroup(title="Remote, keyboard and game pad")

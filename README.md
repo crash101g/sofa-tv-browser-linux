@@ -50,8 +50,8 @@ cd sofa-tv-browser-linux
 ./install.sh
 ```
 
-This installs the system packages it needs with apt (`python3-gi gir1.2-gtk-4.0 gir1.2-adw-1 gir1.2-webkit-6.0
-gir1.2-manette-0.2 mpv`), then puts Sofa in `~/.local/share/sofa-tv-browser`, a `sofa-tv-browser` command in
+This installs the system packages it needs with apt (`python3-gi python3-cryptography gir1.2-gtk-4.0 gir1.2-adw-1
+gir1.2-webkit-6.0 gir1.2-manette-0.2 mpv`), then puts Sofa in `~/.local/share/sofa-tv-browser`, a `sofa-tv-browser` command in
 `~/.local/bin`, and "Sofa TV Browser" in the app grid. `./uninstall.sh` removes it again (`--purge` also removes
 your settings, bookmarks and history).
 
@@ -113,9 +113,15 @@ mpv plays, the phone's keys control mpv.
 The phone remote is **off until you pair a phone**, and it runs only while Sofa's window is on screen. It answers
 only devices on this computer's own home network, never other programs on this computer, and every request needs
 the 128-bit token in the QR code; five wrong tokens block an address for ten minutes. Settings → Phone remote turns
-it off and can forget paired phones (a new QR code). **It is plain HTTP**: someone who can watch your home
-network's traffic could read the token and what you type, so don't type passwords through it on a network you
-don't trust. With a firewall on, allow the port: `sudo ufw allow 8765/tcp`. If Avahi is installed
+it off and can forget paired phones (a new QR code).
+
+The page is **HTTPS**, so someone watching your home network's traffic can't read the token or what you type. Sofa
+makes its own certificate (kept in `~/.config/sofa-tv-browser`), and no authority vouches for it, so the first time
+the phone warns that the connection isn't private: that's expected, continue to the page. After that it warns
+again only when Sofa makes a new certificate, every two years; a warning at any other time means something else
+answered in Sofa's place. For a phone or an iPhone Shortcut that won't accept the certificate, Settings → Phone
+remote → **Plain HTTP** turns the old unencrypted page back on; turning it off again also makes a new QR code.
+With a firewall on, allow the port: `sudo ufw allow 8765/tcp`. If Avahi is installed
 (`avahi-utils`), Sofa also announces the page on the network.
 
 ## What it does

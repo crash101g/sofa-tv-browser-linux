@@ -98,8 +98,10 @@ class Window(Adw.ApplicationWindow):
         self.last_own_video = 0.0
         self.real_mouse = None
         self.phone_tokens = phone.TokenStore()
+        self.phone_certs = phone.CertStore()
         self.phone = phone.PhoneServer(self.phone_tokens, PhoneActions(self),
-                                       lambda fn, *a: GLib.idle_add(lambda: (fn(*a), False)[1]))
+                                       lambda fn, *a: GLib.idle_add(lambda: (fn(*a), False)[1]),
+                                       tls=lambda: None if self.prefs.phone_plain_http else self.phone_certs.context())
 
         self.css = Gtk.CssProvider()
         self.css.load_from_path(paths.resource("style.css"))
@@ -1401,14 +1403,28 @@ class Window(Adw.ApplicationWindow):
         # mpv covering the window can make it count as suspended: the phone still controls mpv then.
         want = self.prefs.phone_remote and self.get_mapped() and (not suspended or self.player.running)
         if want and not self.phone.running:
-            if not self.phone.start():
-                self.toast("Phone remote: ports 8765 to 8768 are all in use")
+            try:
+                if not self.phone.start():
+                    self.toast("Phone remote: ports 8765 to 8768 are all in use")
+            except phone.CertUnavailable as e:
+                # Never quietly falls back to plain HTTP: that is the user's choice, in Settings.
+                self.toast(f"Phone remote is off: {e}", timeout=6)
         elif not want and self.phone.running:
             self.phone.stop()
         self._update_menu()
 
     def phone_changed(self):
         self._phone_sync()
+
+    def phone_security_changed(self):
+        """Plain HTTP turned on or off: the server starts again with the other kind of address."""
+        if not self.prefs.phone_plain_http:
+            self.phone_tokens.rotate()  # the token may have crossed the network in the clear
+        if self.phone.running:
+            self.phone.stop(wait=True)
+        self._phone_sync()
+        if self.phone.running:
+            self.toast("Phone remote: scan the new QR code")
 
     def show_pairing(self):
         if not self.prefs.phone_remote:
@@ -1427,6 +1443,11 @@ class Window(Adw.ApplicationWindow):
                           wrap=True))
         text.append(label("The phone must be on the same network. It works while Sofa is open.", "sofa-hint",
                           wrap=True))
+        if self.phone.scheme == "https":
+            text.append(label("The first time, the phone warns that the connection isn't private: Sofa makes its "
+                              "own certificate, and no authority vouches for it. That's expected; continue to the "
+                              "page (Advanced, then Proceed; or Show Details, then visit this website).",
+                              "sofa-hint", wrap=True))
         addr = label(f"Or open: {url}", "sofa-hint", wrap=True)
         addr.set_selectable(True)
         text.append(addr)

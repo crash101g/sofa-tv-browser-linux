@@ -12,6 +12,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 import json  # noqa: E402
 
 from sofa import adblock, cursors, gamepad, phone, player  # noqa: E402
+from sofa import browser  # noqa: E402
 from sofa.browser import looks_like_url, to_url  # noqa: E402
 from sofa.db import Db, host_of, pretty_host, site_of  # noqa: E402
 from sofa.prefs import ENGINES, Prefs  # noqa: E402
@@ -44,6 +45,45 @@ class UrlTest(unittest.TestCase):
         self.assertEqual(site_of("192.168.1.10"), "192.168.1.10")
         self.assertIsNone(site_of(None))
 
+
+
+class TabLimitTest(unittest.TestCase):
+    def meminfo(self, d, total, avail):
+        path = os.path.join(d, "meminfo")
+        with open(path, "w") as f:
+            f.write(f"MemTotal:       {total} kB\nMemFree:        1000 kB\n")
+            if avail is not None:
+                f.write(f"MemAvailable:   {avail} kB\nBuffers:        10 kB\n")
+        return path
+
+    def test_free_memory(self):
+        with tempfile.TemporaryDirectory() as d:
+            self.assertAlmostEqual(browser.free_memory(self.meminfo(d, 16000000, 4000000)), 0.25)
+            self.assertIsNone(browser.free_memory(self.meminfo(d, 16000000, None)))   # too old a kernel
+            self.assertIsNone(browser.free_memory(os.path.join(d, "missing")))
+        self.assertIsNotNone(browser.free_memory())                                   # this computer's
+
+    def browser_with(self, tabs, unlimited):
+        b = browser.Browser.__new__(browser.Browser)
+        b.tabs = [object()] * tabs
+        b.prefs = type("P", (), {"unlimited_tabs": unlimited})()
+        return b
+
+    def test_room(self):
+        real = browser.free_memory
+        try:
+            browser.free_memory = lambda: 0.60
+            self.assertIsNone(self.browser_with(5, False).tab_room())
+            self.assertEqual(self.browser_with(6, False).tab_room(), "6 tabs is the limit")
+            self.assertIsNone(self.browser_with(40, True).tab_room())                # no limit, memory to spare
+            browser.free_memory = lambda: 0.249
+            self.assertIn("25%", self.browser_with(2, True).tab_room())               # short of memory
+            self.assertIsNone(self.browser_with(5, False).tab_room())                 # the usual limit ignores it
+            browser.free_memory = lambda: None
+            self.assertIsNone(self.browser_with(5, True).tab_room())                  # can't tell: six
+            self.assertEqual(self.browser_with(6, True).tab_room(), "6 tabs is the limit")
+        finally:
+            browser.free_memory = real
 
 class AdBlockTest(unittest.TestCase):
     def test_hosts_file(self):

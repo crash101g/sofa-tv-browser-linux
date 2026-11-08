@@ -22,7 +22,8 @@ from .db import host_of, site_of  # noqa: E402
 WORLD = "sofa"
 GESTURE_S = 1.5         # a window or navigation this soon after a press counts as the user's
 ALLOW_ONCE_S = 60.0
-MAX_TABS = 6
+MAX_TABS = 6            # unless "No tab limit" is on: then as many as memory allows
+MIN_FREE_MEMORY = 0.25  # with no tab limit, a new tab needs this share of the computer's memory free
 MAX_DIALOGS = 2         # alert, confirm and prompt boxes a page may show before the rest are dismissed
 BLOCKED_PAGE = """<!doctype html><meta charset="utf-8"><title>Blocked</title>
 <body style="font:24px system-ui,sans-serif;background:#1e1e1e;color:#eee;display:grid;place-items:center;height:90vh">
@@ -51,6 +52,24 @@ def to_url(text: str, engine) -> str:
             return t
         return ("http://" if t.startswith(("localhost", "127.", "192.168.", "10.")) else "https://") + t
     return engine.search_url(t)
+
+
+def free_memory(path="/proc/meminfo"):
+    """
+    The share of memory still free for programs: MemAvailable / MemTotal, which counts the cache Linux would give
+    back. None if it can't be read.
+    """
+    vals = {}
+    try:
+        with open(path, encoding="ascii") as f:
+            for line in f:
+                name, _, rest = line.partition(":")
+                if name in ("MemTotal", "MemAvailable"):
+                    vals[name] = int(rest.split()[0])
+    except (OSError, ValueError, IndexError):
+        return None
+    total, avail = vals.get("MemTotal"), vals.get("MemAvailable")
+    return avail / total if total and avail is not None else None
 
 
 class Tab:
@@ -155,6 +174,21 @@ class Browser:
 
     def all_tabs(self):
         return self.tabs + (self.saved[0] if self.saved else [])
+
+    def tab_room(self) -> str | None:
+        """None if another tab may open, or why not: six at most, or with "No tab limit" a quarter of memory free."""
+        count = len(self.tabs)
+        if not self.prefs.unlimited_tabs:
+            return None if count < MAX_TABS else f"{MAX_TABS} tabs is the limit"
+        free = free_memory()
+        if free is None:  # can't tell: the usual limit, to be safe
+            return None if count < MAX_TABS else f"{MAX_TABS} tabs is the limit"
+        if free < MIN_FREE_MEMORY:
+            return f"Only {free:.0%} of memory is free, and a new tab needs {MIN_FREE_MEMORY:.0%}"
+        return None
+
+    def can_open_tab(self) -> bool:
+        return self.tab_room() is None
 
     def tab_of(self, view=None, ucm=None) -> Tab | None:
         return next((t for t in self.all_tabs() if t.view is view or (ucm is not None and t.ucm is ucm)), None)
@@ -424,10 +458,12 @@ class Browser:
         if active and (not self.gesture(action) or self.adblock.blocks_popup(target)):
             self._block(tab, uri)
             return None
-        if len(self.tabs) >= MAX_TABS or tab not in self.tabs:
+        # A tab put away while private browsing is on can't add tabs to the private ones.
+        why = self.tab_room() if tab in self.tabs else "this tab is put away while private browsing is on"
+        if why:
             if uri and uri != "about:blank":
                 GLib.idle_add(lambda: view.load_uri(uri) or False)
-            self.ui.on_tab_limit(tab)
+            self.ui.on_tab_limit(tab, why)
             return None
         same = not target or site_of(target) == site_of(host_of(view.get_uri()))
         # A middle click or Ctrl+click on a link is meant: no question.

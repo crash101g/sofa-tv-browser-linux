@@ -255,6 +255,9 @@ class Settings(Gtk.Box):
         self._combo(g, "cursor_speed", "Pointer speed", SPEEDS, after=a.apply_pointer_speed)
         self._combo(g, "zoom", "Page zoom", ZOOMS, after=a.browser.reconfigure)
         self._switch(g, "restore_tabs", "Reopen tabs at start", "Not private tabs, and not after clearing on exit")
+        self._switch(g, "unlimited_tabs", "No tab limit",
+                     "More than six tabs, as long as at least a quarter of this computer's memory is free",
+                     after=a._update_menu)
         page.add(g)
 
         g = Adw.PreferencesGroup(

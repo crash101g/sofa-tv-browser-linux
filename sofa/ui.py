@@ -427,7 +427,7 @@ class Menu(Gtk.Box):
                   "Bookmarked" if s["bookmarked"] else "Bookmark")
         self._set("pin", text="Pinned" if s["pinned"] else "Pin to home")
         self._set("tabs", text=f"Tabs ({s['tabs']})")
-        self._set("new_tab", enabled=s["tabs"] < s["max_tabs"])
+        self._set("new_tab", enabled=s["can_add_tab"])
         self._set("adblock", "security-high-symbolic" if s["adblock"] else "security-low-symbolic",
                   "Ad block: on" if s["adblock"] else "Ad block: off")
         self._set("allow_once", visible=s["pending"])

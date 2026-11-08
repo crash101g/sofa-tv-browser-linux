@@ -328,7 +328,9 @@ class Window(Adw.ApplicationWindow):
     def _restore_tabs(self):
         p = self.prefs
         saved = p.tabs if p.restore_tabs and not p.clear_on_exit else []
-        for item in saved[:MAX_TABS]:
+        for item in saved:
+            if self.browser.tab_room():
+                break  # six, or memory is short: the rest aren't reopened
             url = item.get("url") if isinstance(item, dict) else None
             if not url or not url.startswith(("http://", "https://", "file:")):
                 continue
@@ -394,8 +396,9 @@ class Window(Adw.ApplicationWindow):
         False at the limit.
         """
         b = self.browser
-        if len(b.tabs) >= MAX_TABS:
-            self.toast(f"{MAX_TABS} tabs is the limit. Close one in Tabs, in the menu")
+        why = b.tab_room()
+        if why:
+            self.toast(f"{why}. Close one in Tabs, in the menu", timeout=4)
             return False
         tab = b.make_tab(b.private)
         self._add_view(tab)
@@ -412,8 +415,9 @@ class Window(Adw.ApplicationWindow):
     def open_in_background(self, opener, url):
         """A right-clicked link: a new tab after its page (and after the tabs it opened before), not shown yet."""
         b = self.browser
-        if len(b.tabs) >= MAX_TABS:
-            self.toast(f"{MAX_TABS} tabs is the limit. Close one in the menu")
+        why = b.tab_room()
+        if why:
+            self.toast(f"{why}. Close one in the menu", timeout=4)
             return
         tab = b.make_tab(b.private)
         tab.view.set_is_muted(True)  # until it is shown
@@ -478,12 +482,13 @@ class Window(Adw.ApplicationWindow):
             name = t.title or (host_of(t.uri) or "Home")
             sub = ("This tab · " if i == b.current else "") + (t.uri or "New tab")
             items.append((name, sub, lambda i=i: self.switch_tab(i)))
-        if len(b.tabs) < MAX_TABS:
+        if b.can_open_tab():
             items.append(("New tab", "", lambda: self.new_tab()))
         items.append(("Close this tab", b.tab.title or b.tab.uri or "", lambda: self.close_tab(b.current)))
         if len(b.tabs) > 1:
             items.append(("Close the other tabs", "", self.close_other_tabs))
-        self.pick(f"Tabs ({len(b.tabs)} of {MAX_TABS})", "", items)
+        self.pick(f"Tabs ({len(b.tabs)})" if self.prefs.unlimited_tabs else f"Tabs ({len(b.tabs)} of {MAX_TABS})", "",
+                  items)
 
     def close_other_tabs(self):
         keep = self.browser.tab
@@ -581,8 +586,8 @@ class Window(Adw.ApplicationWindow):
         if self._is_current(tab):
             self.toast("Pop-up blocked. “Allow once” is in the menu.", timeout=3)
 
-    def on_tab_limit(self, tab):
-        self.toast(f"Opened here: {MAX_TABS} tabs is the limit")
+    def on_tab_limit(self, tab, why):
+        self.toast(f"Opened here: {why}", timeout=4)
 
     def on_close_request(self, tab):
         # window.close() from a page: only a tab it opened itself has one to close.
@@ -594,7 +599,7 @@ class Window(Adw.ApplicationWindow):
         b = self.browser
 
         def add():
-            if len(b.tabs) >= MAX_TABS or opener not in b.tabs:
+            if opener not in b.tabs or b.tab_room():
                 self._discard(new)
                 if uri and uri != "about:blank":
                     opener.view.load_uri(uri)
@@ -836,7 +841,7 @@ class Window(Adw.ApplicationWindow):
         host = host_of(uri)
         self.menu.update({
             "tab_list": [(t.title, t.uri, i == self.browser.current) for i, t in enumerate(self.browser.tabs)],
-            "tabs": len(self.browser.tabs), "max_tabs": MAX_TABS, "phone": self.phone.running,
+            "tabs": len(self.browser.tabs), "can_add_tab": self.browser.can_open_tab(), "phone": self.phone.running,
             "autoclean": self.prefs.in_set("autoclean_sites", site_of(host)),
             "address": uri, "can_back": v.can_go_back(), "can_forward": v.can_go_forward(),
             "loading": v.is_loading(), "bookmarked": bool(uri) and self.db.is_bookmarked(uri),
@@ -1056,7 +1061,7 @@ class Window(Adw.ApplicationWindow):
         options = []
         if link:
             options.append(("open", "Open link"))
-            if len(self.browser.tabs) < MAX_TABS:
+            if self.browser.can_open_tab():
                 options.append(("new_tab", "Open in new tab"))
         if video or link:
             options.append(("play", "Play in mpv"))

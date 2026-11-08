@@ -28,7 +28,7 @@ the room they're hard to read and awkward to drive. Sofa is built for that room 
 |---|---|
 | 🎮 **Any controller** | TV remotes (they show up as keyboards), Xbox, PlayStation and 8BitDo game pads, a mouse and keyboard, or your phone |
 | 📱 **Phone remote** | Scan a QR code and your phone becomes a trackpad, a keyboard and a remote. No app to install |
-| 🗂️ **Tabs** | Up to six, shown across the top of the menu, each with ×. Ctrl+T for a new one; right-click a link to open it in the background |
+| 🗂️ **Tabs** | Up to six, or as many as memory allows, shown across the top of the menu, each with ×. Ctrl+T for a new one; right-click a link to open it in the background |
 | 🛡️ **Ad blocking** | Built into the web engine. Two lists come built in, and EasyList, uBlock Origin, AdGuard and more are one switch away. **Clean up** and **Remove element** handle the rest |
 | ▶️ **Watch** | One button: the page's main video, full screen in mpv (with yt-dlp for YouTube and similar) |
 | 🖱️ **Big pointers** | The mouse pointer and the remote's dot are larger than usual, in four sizes |
@@ -135,7 +135,9 @@ With a firewall on, allow the port: `sudo ufw allow 8765/tcp`. If Avahi is insta
   Home, history, bookmarks, downloads, ad blocking, Clean up, Remove element, "Allow once", Watch by itself,
   "Browse as" desktop, mobile, TV or WebKit, scroll mode, pointer on or off per site, zoom, full screen, the phone
   remote, settings, and Exit (closes Sofa, like Ctrl+Q). The buttons wrap onto as many rows as the screen needs, so nothing is hidden off to the side.
-- **Tabs**: up to six. With two or more, the menu shows them across its top: click or press OK on one to go to
+- **Tabs**: up to six, or with Settings → **No tab limit** as many as you like while at least a quarter of the
+  computer's memory is free (as Linux counts it: MemAvailable, which includes cache it can give back). With two or
+  more, the menu shows them across its top: click or press OK on one to go to
   it, or on its × to close it. They are also in Tabs in the menu and in "Open tabs" on Home. Ctrl+T opens a new
   tab at the end, ready to type an address. Right-click a link to open it in a new tab in the background (muted
   until you look at it), or hold OK on it for "Open in new tab". A tab out of sight pauses its videos. Tabs reopen

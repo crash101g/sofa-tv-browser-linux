@@ -504,7 +504,8 @@ class SearchPanel(Gtk.Box):
                     break
         self._show(items)
         eng = self.app.prefs.engine
-        if text and self.app.prefs.search_suggestions and eng.suggest:
+        # Private browsing sends nothing as you type, even with suggestions on.
+        if text and self.app.prefs.search_suggestions and eng.suggest and not self.app.browser.private:
             url = eng.suggest_url(text)
 
             def fetch():

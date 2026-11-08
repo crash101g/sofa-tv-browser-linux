@@ -139,7 +139,7 @@ class Settings(Gtk.Box):
         custom = self._entry(g, "custom_search", "Custom search address (%s is the search)")
         custom.set_visible(p.search_engine == "custom")
         self._switch(g, "search_suggestions", "Search suggestions",
-                     "Sends what you type to the search engine as you type it")
+                     "Sends what you type to the search engine as you type it. Never in private browsing")
         page.add(g)
 
         ab = a.adblock

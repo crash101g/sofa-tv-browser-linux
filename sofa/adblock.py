@@ -83,7 +83,7 @@ STRONGER_IDS = ["easylist", "easyprivacy"]
 
 UPDATE_EVERY_S = 4 * 86400
 # A rule format version: bump it to recompile every list after a change to the conversion.
-FORMAT = "5"
+FORMAT = "6"
 # Rules per WebKit filter: larger lists are split.
 CHUNK = 50000
 
@@ -93,6 +93,8 @@ CHALLENGE_HOSTS = ["challenges.cloudflare.com", "hcaptcha.com", "recaptcha.net",
 
 _HOST_RE = re.compile(r"^[a-z0-9_-]+(\.[a-z0-9_-]+)+$")
 _HOSTS_LINE = re.compile(r"^(?:0\.0\.0\.0|127\.0\.0\.1|::1?|::)\s+(\S+)")
+# An element hiding rule ("site.com##.ad", "site.com#@#.ad", "site.com#?#..."): not a domain followed by a comment.
+_COSMETIC = re.compile(r"#[@?$%]{0,2}#")
 
 TYPES = {
     "script": "script", "image": "image", "stylesheet": "style-sheet", "font": "font", "media": "media",
@@ -114,7 +116,7 @@ def read_domains(text: str) -> set[str]:
     out = set()
     for raw in text.splitlines():
         line = raw.strip()
-        if not line or line[0] in "#![":
+        if not line or line[0] in "#![" or _COSMETIC.search(line):
             continue
         m = _HOSTS_LINE.match(line)
         if m:

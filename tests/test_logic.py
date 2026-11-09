@@ -89,6 +89,9 @@ class AdBlockTest(unittest.TestCase):
     def test_hosts_file(self):
         d = adblock.read_domains("# c\n0.0.0.0 ads.example.com\n127.0.0.1 localhost\ntracker.net\n||pop.io^\n")
         self.assertEqual(d, {"ads.example.com", "tracker.net", "pop.io"})
+        # Element hiding rules name the sites they hide things on, not sites to block.
+        d = adblock.read_domains("news.com##.ad\nshop.com,b.org#@#.ad\nx.com#?#.ad\nads.net # comment\n")
+        self.assertEqual(d, {"ads.net"})
         rules, doms = adblock.convert("0.0.0.0 ads.example.com\n")
         self.assertEqual(len(rules), 1)
         rx = re.compile(rules[0]["trigger"]["url-filter"])

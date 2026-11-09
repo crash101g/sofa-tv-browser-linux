@@ -16,6 +16,13 @@ if [ -n "$MISSING" ]; then
     echo "Installing the system packages Sofa needs:$MISSING"
     sudo apt-get install -y $MISSING
 fi
+# Pop!_OS / Ubuntu 22.04 has every package above, but its libadwaita (1.1) is too old for Sofa (1.5 or newer).
+if ! python3 -c 'import gi; gi.require_version("Adw", "1"); from gi.repository import Adw
+raise SystemExit((Adw.get_major_version(), Adw.get_minor_version()) < (1, 5))' 2>/dev/null; then
+    echo "Sofa needs libadwaita 1.5 or newer, and this system's is older (Pop!_OS / Ubuntu 22.04 has 1.1)."
+    echo "Upgrading to 24.04 is the way: see \"Pop!_OS 22.04\" in README.md. Nothing was installed."
+    exit 1
+fi
 
 echo "Installing Sofa to $DEST"
 rm -rf "$DEST"

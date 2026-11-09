@@ -11,6 +11,12 @@ WebKit applies an exception rule only to the rules before it in the same list, s
 use (and the captcha providers, which are never blocked) are added to the end of each list. A list too large for
 one WebKit filter is split, and each part ends with the same exceptions.
 
+As in uBlock Origin, a rule blocks the page being opened itself only if it says so ($document) or names a whole
+site (||example.com^); every other rule applies to what a page loads, frames included. Otherwise a rule meant for
+ad pictures, such as "/ad-", would block any article whose address happens to contain it. $badfilter rules cancel
+the rule they repeat, in every list, and $ghide exceptions turn element hiding by generic rules off on their sites
+(each list starts with its generic hiding rules and those exceptions, which then undo nothing else).
+
 Elements the user removes ("Remove element") are kept per site as CSS selectors, and YouTube's player data loses
 its ad entries through a small script in the page's own world, as uBlock Origin's json-prune does.
 """
@@ -77,7 +83,7 @@ STRONGER_IDS = ["easylist", "easyprivacy"]
 
 UPDATE_EVERY_S = 4 * 86400
 # A rule format version: bump it to recompile every list after a change to the conversion.
-FORMAT = "4"
+FORMAT = "5"
 # Rules per WebKit filter: larger lists are split.
 CHUNK = 50000
 
@@ -194,12 +200,13 @@ def _domains(spec: str, sep: str):
     return inc, exc
 
 
-def _network_rule(line: str):
+def _network_rule(line: str) -> list:
+    """An Adblock network rule as WebKit rules: none if WebKit can't express it, two if it blocks frames."""
     exception = line.startswith("@@")
     if exception:
         line = line[2:]
     if line.startswith("/") and (line.endswith("/") or "/$" in line) and len(line) > 2:
-        return None  # full regular expressions use syntax WebKit lacks
+        return []  # full regular expressions use syntax WebKit lacks
     pattern, sep, opts = line.rpartition("$")
     if not sep or "/" in opts or "^" in opts or "*" in opts:
         pattern, opts = line, ""  # a "$" that is part of the address, not options
@@ -207,6 +214,7 @@ def _network_rule(line: str):
     action = {"type": "ignore-previous-rules" if exception else "block"}
     types, not_types = [], []
     document_exception = False
+    page = False  # $document: the rule may block the page being opened, not only frames in it
     for o in filter(None, (x.strip() for x in opts.split(","))):
         neg = o.startswith("~")
         name, _, value = (o[1:] if neg else o).partition("=")
@@ -230,6 +238,7 @@ def _network_rule(line: str):
                 document_exception = True
             else:
                 (not_types if neg else types).append("document")
+                page = page or not neg
         elif name in ("xhr",):
             (not_types if neg else types).append("raw")
         elif name in ("css",):
@@ -239,21 +248,74 @@ def _network_rule(line: str):
         elif name in TYPES:
             (not_types if neg else types).append(TYPES[name])
         else:  # options WebKit can't express (SKIP_OPTIONS and anything unknown): leave the rule out
-            return None
+            return []
     if document_exception:
         dom = pattern.lstrip("|").split("^")[0].split("/")[0]
         if not _HOST_RE.match(dom or ""):
-            return None
-        return {"trigger": {"url-filter": ".*", "if-domain": ["*" + dom]}, "action": {"type": "ignore-previous-rules"}}
+            return []
+        return [{"trigger": {"url-filter": ".*", "if-domain": ["*" + dom]}, "action": {"type": "ignore-previous-rules"}}]
     regex = _url_regex(pattern)
     if regex is None:
-        return None
+        return []
     trigger["url-filter"] = regex
     if not_types and not types:
         types = [t for t in ALL_TYPES if t not in not_types]
-    if types:
-        trigger["resource-type"] = sorted(set(types))
-    return {"trigger": trigger, "action": action}
+    types = sorted(set(types))
+    whole_site = not types and _SITE_PATTERN.match(pattern.lower()) is not None
+    if exception or page or whole_site or (types and "document" not in types):
+        if types:
+            trigger["resource-type"] = types
+        return [{"trigger": trigger, "action": action}]
+    # Not for the page being opened: what it loads, and documents in frames (load-context child-frame).
+    rest = [t for t in (types or ALL_TYPES) if t != "document"]
+    out = [{"trigger": {**trigger, "resource-type": rest}, "action": action}] if rest else []
+    out.append({"trigger": {**trigger, "resource-type": ["document"], "load-context": ["child-frame"]},
+                "action": dict(action)})
+    return out
+
+
+_SITE_PATTERN = re.compile(r"^\|\|[a-z0-9.*-]+\^?\|?$")
+
+
+def _rule_key(line: str) -> str:
+    """A rule's text with its options in a fixed order, to match a $badfilter to the rule it cancels."""
+    pattern, sep, opts = line.rpartition("$")
+    if not sep or "/" in opts or "^" in opts or "*" in opts:
+        return line
+    return pattern + "$" + ",".join(sorted(o.strip().lower() for o in opts.split(",") if o.strip()))
+
+
+def cancelled_rules(text: str) -> set[str]:
+    """The rules a list's $badfilter lines cancel (in every list in use, as in uBlock Origin)."""
+    out = set()
+    for raw in text.splitlines():
+        line = raw.strip()
+        if "badfilter" not in line or "$" not in line or line.startswith("!"):
+            continue
+        pattern, _, opts = line.rpartition("$")
+        rest = [o.strip() for o in opts.split(",") if o.strip() and o.strip().lower() != "badfilter"]
+        if len(rest) < len([o for o in opts.split(",") if o.strip()]):
+            out.add(_rule_key(pattern + ("$" + ",".join(rest) if rest else "")))
+    return out
+
+
+_GHIDE = {"ghide", "generichide", "elemhide", "ehide"}
+
+
+def _ghide_hosts(line: str) -> list[str]:
+    """The sites an "@@...$ghide" exception turns generic element hiding off on, as WebKit if-domain values."""
+    pattern, sep, opts = line[2:].rpartition("$")
+    names = [o.strip().lower() for o in opts.split(",") if o.strip()] if sep else []
+    if not names or not any(n in _GHIDE for n in names):
+        return []
+    others = [n for n in names if n not in _GHIDE]
+    if any(not n.startswith(("domain=", "from=")) for n in others):
+        return []  # tied to resource types or the like: not about the whole page
+    if others:
+        inc, _exc = _domains(others[0].partition("=")[2], "|")
+        return inc if pattern in ("", "*") else []
+    dom = pattern.lstrip("|").rstrip("^")
+    return ["*" + dom] if _HOST_RE.match(dom) else []
 
 
 def challenge_rules() -> list:
@@ -271,6 +333,8 @@ class Parsed:
     """One list's rules: blocking and hiding rules, exceptions, and the domains it blocks outright or as pop-ups."""
     blocks: list = field(default_factory=list)
     exceptions: list = field(default_factory=list)
+    generic_css: list = field(default_factory=list)   # hiding rules for every site (see ghide_rules)
+    ghide: set = field(default_factory=set)           # sites where those are off, as WebKit if-domain values
     domains: set = field(default_factory=set)
     popups: set = field(default_factory=set)
 
@@ -278,8 +342,10 @@ class Parsed:
 _POPUP_RULE = re.compile(r"^\|\|([a-z0-9.-]+)\^?\$(?:(?:third-party|3p|~first-party),)?popup(?:,(?:third-party|3p))?$")
 
 
-def parse(text: str) -> Parsed:
-    """A list's text as WebKit content-blocker rules."""
+def parse(text: str, cancelled: frozenset | set = frozenset()) -> Parsed:
+    """A list's text as WebKit content-blocker rules, without the [cancelled] ones (see cancelled_rules)."""
+    if cancelled:
+        text = "\n".join(line for line in text.splitlines() if _rule_key(line.strip()) not in cancelled)
     p = Parsed(domains=read_domains(text))
     if not is_adblock_syntax(text):
         p.blocks = [{"trigger": {"url-filter": _domain_regex(d)}, "action": {"type": "block"}} for d in sorted(p.domains)]
@@ -313,14 +379,15 @@ def parse(text: str) -> Parsed:
         m = _POPUP_RULE.match(line.lower())
         if m and _HOST_RE.match(m.group(1)):
             p.popups.add(m.group(1))
-        rule = _network_rule(line)
-        if rule:
+        if line.startswith("@@"):
+            p.ghide.update(_ghide_hosts(line))
+        for rule in _network_rule(line):
             (exceptions if rule["action"]["type"] == "ignore-previous-rules" else blocks).append(rule)
     rules = [{"trigger": {"url-filter": _domain_regex(d)}, "action": {"type": "block"}} for d in sorted(p.domains)]
     rules += blocks
-    for i in range(0, len(generic_css), 250):
-        rules.append({"trigger": {"url-filter": ".*"},
-                      "action": {"type": "css-display-none", "selector": ", ".join(generic_css[i:i + 250])}})
+    p.generic_css = [{"trigger": {"url-filter": ".*"},
+                      "action": {"type": "css-display-none", "selector": ", ".join(generic_css[i:i + 250])}}
+                     for i in range(0, len(generic_css), 250)]
     for (kind, doms), sels in specific_css.items():
         rules.append({"trigger": {"url-filter": ".*", kind: list(doms)},
                       "action": {"type": "css-display-none", "selector": ", ".join(sels)}})
@@ -329,10 +396,24 @@ def parse(text: str) -> Parsed:
     return p
 
 
+def ghide_rules(hosts) -> list:
+    """Exceptions that turn the generic hiding rules before them off on [hosts] (if-domain values)."""
+    hosts = sorted(set(hosts))
+    return [{"trigger": {"url-filter": ".*", "if-domain": hosts[i:i + 1000]}, "action": {"type": "ignore-previous-rules"}}
+            for i in range(0, len(hosts), 1000)]
+
+
+def list_rules(p: Parsed, ghide=()) -> list:
+    """A parsed list's blocking and hiding rules, its generic hiding first, followed by the $ghide exceptions."""
+    if not p.generic_css:
+        return p.blocks
+    return p.generic_css + ghide_rules(ghide) + p.blocks
+
+
 def convert(text: str) -> tuple[list, set[str]]:
     """A list's text as one WebKit rule list (its exceptions last), and the plain domains it blocks."""
     p = parse(text)
-    return p.blocks + p.exceptions, p.domains
+    return list_rules(p, p.ghide) + p.exceptions, p.domains
 
 
 def chunks(blocks: list, shared: list, size: int = CHUNK) -> list[list]:
@@ -472,12 +553,10 @@ class AdBlocker:
                     failed.append(f.title)
         if due:
             GLib.idle_add(lambda: setattr(self.prefs, "last_list_update", int(time.time())) or False)
-        parsed = []
-        for f in wanted:
-            text = self._read_text(f)
-            if text is None:
-                continue
-            parsed.append((f.id, hashlib.sha1(text.encode()).hexdigest()[:16], parse(text)))
+        texts = [(f.id, t) for f in wanted if (t := self._read_text(f)) is not None]
+        cancelled = set().union(*(cancelled_rules(t) for _i, t in texts)) if texts else set()
+        parsed = [(list_id, hashlib.sha1(t.encode()).hexdigest()[:16], parse(t, cancelled)) for list_id, t in texts]
+        ghide = set().union(*(p.ghide for _i, _h, p in parsed)) if parsed else set()
         # Every list's exceptions, at the end of every list (see the module notes).
         shared, seen = [], set()
         for _id, _h, p in parsed:
@@ -487,10 +566,11 @@ class AdBlocker:
                     seen.add(key)
                     shared.append(r)
         shared += challenge_rules()
-        shared_hash = hashlib.sha1(json.dumps(shared, sort_keys=True).encode()).hexdigest()[:8]
+        # The rules of one list also depend on the others: their exceptions, $badfilter and $ghide rules.
+        shared_hash = hashlib.sha1(json.dumps([shared, sorted(cancelled), sorted(ghide)]).encode()).hexdigest()[:8]
         jobs = []
         for list_id, text_hash, p in parsed:
-            for n, rules in enumerate(chunks(p.blocks, shared)):
+            for n, rules in enumerate(chunks(list_rules(p, ghide), shared)):
                 jobs.append((f"{list_id}#{n}", f"{list_id}-{FORMAT}-{text_hash}-{shared_hash}-{n}", rules))
         domains = set().union(*(p.domains for _i, _h, p in parsed)) if parsed else set()
         popups = set().union(*(p.popups for _i, _h, p in parsed)) if parsed else set()

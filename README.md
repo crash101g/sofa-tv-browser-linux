@@ -63,6 +63,29 @@ sudo apt install pipx && pipx install yt-dlp     # and now and then: pipx upgrad
 
 To run without installing, from this folder: `./sofa-tv-browser`.
 
+### Pop!_OS 22.04 / Ubuntu 22.04: not supported
+
+Sofa does not run on 22.04, and `./install.sh` can't fix that there. WebKitGTK 6.0 is fine (22.04 has 2.50), but
+**libadwaita**, the GNOME library for Sofa's dialogs and settings, is too old, and 22.04 gets no newer one:
+
+| Sofa needs | Ubuntu 24.04 | Ubuntu 22.04 |
+|---|---|---|
+| WebKitGTK 6.0 (`gir1.2-webkit-6.0`) | 2.52 | 2.50: fine |
+| libadwaita 1.5 or newer | 1.5 | **1.1**: no `AlertDialog` or `Dialog` (every dialog in Sofa), `ToolbarView`, `SwitchRow`, `EntryRow` (the settings) or `ResponseAppearance` |
+| GTK 4 | 4.14 | 4.6: fine, apart from one style call that needs 4.12 |
+
+On 22.04, Sofa stops at once with "Sofa TV Browser needs libadwaita 1.5 or newer; this system has 1.1".
+
+The choices, from least to most work:
+
+1. **Upgrade to Pop!_OS 24.04.** No changes to Sofa.
+2. **A Flatpak of Sofa** (not made yet). It brings its own libadwaita and WebKitGTK from the GNOME runtime, so it
+   would run on 22.04 and on other distributions. About a day of work: mpv, the gamepad library and the phone
+   remote's network announcement need packaging or sandbox permissions, and yt-dlp would need to update itself.
+3. **Making Sofa work with libadwaita 1.1.** About a day or two: plain GTK stand-ins for the dialogs, the settings
+   rows and the toolbar layout, used when libadwaita is older than 1.5, then everything tested on both versions.
+   Not planned, because each later change to Sofa's dialogs or settings would need the same.
+
 ## Using it
 
 | Remote / keyboard | Game pad | What it does |
@@ -165,7 +188,14 @@ With a firewall on, allow the port: `sudo ufw allow 8765/tcp`. If Avahi is insta
   - Settings → Filter lists turns on more, one by one: EasyList, EasyPrivacy, the uBlock Origin lists (ads,
     privacy, badware, quick fixes, unbreak, cookie notices, annoyances), AdGuard's lists, Peter Lowe's list and
     Fanboy's Annoyance. Each is downloaded from its publisher when turned on. Any other list can be added by its
-    https:// address (lists over plain HTTP could be changed on the way, so Sofa refuses them). The exceptions of every list in use apply to all of them, as in uBlock Origin.
+    https:// address (lists over plain HTTP could be changed on the way, so Sofa refuses them). The exceptions of
+    every list in use apply to all of them, as in uBlock Origin, and so do `$badfilter` rules (which cancel a
+    rule another list got wrong) and `$ghide` exceptions (which turn generic element hiding off on a site).
+  - As in uBlock Origin, a rule only blocks the page you open itself if it names a whole site (`||example.com^`)
+    or says `$document`. Other rules block what a page loads, frames included, so a rule meant for ad pictures
+    can't block an article whose address happens to match it.
+  - When a list blocks the page you open, "Sofa blocked this page" offers to keep it blocked, open it this time
+    (until Sofa closes) or always allow the site. Sites are sometimes on lists by mistake.
   - Compiling takes a few seconds per list the first time (all sixteen: about a minute); later starts load them
     at once.
   - Captchas (reCAPTCHA, hCaptcha, Cloudflare Turnstile, Arkose) are never blocked, whatever a list says.

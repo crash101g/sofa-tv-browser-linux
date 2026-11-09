@@ -681,6 +681,28 @@ class Window(Adw.ApplicationWindow):
                     lambda r: r == "open" and Gio.AppInfo.launch_default_for_uri_async(uri, None, None, None, None),
                     destructive="open")
 
+    def on_page_blocked(self, tab, host, uri):
+        """A filter list blocked the page itself: it may be there by mistake, so offer to open it anyway."""
+        if not self._is_current(tab):
+            return
+
+        def open_anyway(always):
+            if always:
+                self.prefs.set_in("adblock_off_sites", host, True)
+                self.toast(f"Ad blocking off on {host}")
+            else:
+                self.browser.allowed_for_now.add(host)
+            self.browser.refresh_content(tab, uri)
+            tab.view.load_uri(uri)
+
+        self.pick(f"Sofa blocked {host}", "It is on one of your ad and tracker lists. Sites are sometimes on them "
+                  "by mistake. Opening it turns ad blocking off on this site.", [
+                      ("Keep it blocked", "", lambda: None),
+                      ("Open it this time", "Until Sofa closes", lambda: open_anyway(False)),
+                      (f"Always allow {host}", "Turn ad blocking off on this site. The menu turns it back on",
+                       lambda: open_anyway(True)),
+                  ])
+
     def ask_tls(self, tab, host, go_on):
         if not self._is_current(tab):
             return
@@ -971,7 +993,11 @@ class Window(Adw.ApplicationWindow):
         host = host_of(uri)
         if not host:
             return
-        off = not self.prefs.in_set("adblock_off_sites", host)
+        if host in self.browser.allowed_for_now:  # opened anyway from the blocked page: turn blocking back on
+            self.browser.allowed_for_now.discard(host)
+            off = False
+        else:
+            off = not self.prefs.in_set("adblock_off_sites", host)
         self.prefs.set_in("adblock_off_sites", host, off)
         self.toast(f"Ad blocking off on {host}" if off else f"Ad blocking on for {host}")
         self.browser.refresh_content(tab, uri)

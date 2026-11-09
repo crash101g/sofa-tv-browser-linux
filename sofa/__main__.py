@@ -22,6 +22,16 @@ try:
 except (ImportError, ValueError) as e:
     sys.exit(_missing(e))
 
+from gi.repository import Adw  # noqa: E402
+
+if (Adw.get_major_version(), Adw.get_minor_version()) < (1, 5):
+    # Pop!_OS / Ubuntu 22.04 (libadwaita 1.1): it has WebKitGTK 6.0, but not the libadwaita Sofa's dialogs need.
+    sys.stderr.write(
+        "Sofa TV Browser needs libadwaita 1.5 or newer; this system has "
+        f"{Adw.get_major_version()}.{Adw.get_minor_version()}.\n"
+        "Pop!_OS / Ubuntu 22.04 has no newer one. Upgrading to 24.04 is the way: see \"Pop!_OS 22.04\" in README.md.\n")
+    sys.exit(1)
+
 from .app import main  # noqa: E402
 
 sys.exit(main(sys.argv))

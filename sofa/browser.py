@@ -28,8 +28,8 @@ MAX_DIALOGS = 2         # alert, confirm and prompt boxes a page may show before
 BLOCKED_PAGE = """<!doctype html><meta charset="utf-8"><title>Blocked</title>
 <body style="font:24px system-ui,sans-serif;background:#1e1e1e;color:#eee;display:grid;place-items:center;height:90vh">
 <div style="max-width:900px"><h1 style="font-size:40px">Sofa blocked this page</h1>
-<p>{host} is on one of Sofa's ad and tracker lists.</p>
-<p style="opacity:.7">To open it anyway, press Back, choose "Ad block" in the menu and turn it off for this site.</p>
+<p>{host} is on one of your ad and tracker lists. Sites are sometimes on them by mistake.</p>
+<p style="opacity:.7">To open it anyway, choose "Ad block" in the menu and turn it off for this site.</p>
 </div>"""
 
 
@@ -134,6 +134,7 @@ class Browser:
         self.last_input = 0.0
         self.typed_navigation = False
         self.adblock.connect(self._filters_changed)
+        self.allowed_for_now: set[str] = set()  # sites opened anyway from "Sofa blocked this page", until Sofa closes
         prefs.connect(self._pref_changed)
 
     # Sessions
@@ -271,7 +272,8 @@ class Browser:
 
     # Ad blocking, removed elements and the page scripts, per tab
     def adblock_on_for(self, url) -> bool:
-        return self.prefs.adblock and not self.prefs.in_set("adblock_off_sites", host_of(url))
+        host = host_of(url)
+        return self.prefs.adblock and not self.prefs.in_set("adblock_off_sites", host) and host not in self.allowed_for_now
 
     def adblock_on_here(self):
         return self.adblock_on_for(self.tab.uri) if self.tab else self.prefs.adblock
@@ -581,8 +583,11 @@ class Browser:
     def _on_load_failed(self, view, event, uri, error):
         # A page on a listed ad or tracker domain: say so, rather than leave the screen blank.
         if error.domain == "WebKitPolicyError" and error.code == 104:
-            host = GLib.markup_escape_text(host_of(uri) or uri)
-            view.load_alternate_html(BLOCKED_PAGE.replace("{host}", host), uri, None)
+            host = host_of(uri)
+            view.load_alternate_html(BLOCKED_PAGE.replace("{host}", GLib.markup_escape_text(host or uri)), uri, None)
+            tab = self.tab_of(view)
+            if tab is not None and host:
+                self.ui.on_page_blocked(tab, host, uri)
             return True
         return False  # WebKit's own error page
 

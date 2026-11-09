@@ -196,6 +196,65 @@ class AdBlockTest(unittest.TestCase):
         finally:
             urllib.request.urlopen = real
 
+    def _page_rules(self, rules):
+        """The rules that can block the page being opened (not only something in it, or a frame)."""
+        return [r for r in rules if r["action"]["type"] == "block" and r["trigger"].get("load-context") != ["child-frame"]
+                and "document" in r["trigger"].get("resource-type", ["document"])]
+
+    def test_only_doc_and_site_rules_block_the_page_opened(self):
+        # A rule for ad pictures must not block an article whose address matches it; it still blocks ad frames.
+        rules = adblock._network_rule("/ad-")
+        self.assertEqual(self._page_rules(rules), [])
+        self.assertIn("image", rules[0]["trigger"]["resource-type"])
+        self.assertEqual(rules[1]["trigger"], {"url-filter": "/ad-", "resource-type": ["document"],
+                                               "load-context": ["child-frame"]})
+        self.assertEqual(self._page_rules(adblock._network_rule("/banner/*$subdocument")), [])
+        # $document, and a whole site, still block the page (with a choice to open it anyway: see Browser).
+        self.assertEqual(len(self._page_rules(adblock._network_rule("/landing-$doc"))), 1)
+        self.assertEqual(len(self._page_rules(adblock._network_rule("||ads.example^$third-party"))), 1)
+        rules, _ = adblock.convert("[Adblock]\n||ads.example.com^\n")
+        self.assertEqual(len(self._page_rules(rules)), 1)
+        # Rules for other types, and exceptions, are as they were.
+        self.assertEqual(adblock._network_rule("/t.js$script")[0]["trigger"]["resource-type"], ["script"])
+        self.assertNotIn("resource-type", adblock._network_rule("@@||good.example/ad-")[0]["trigger"])
+        self.assertEqual(adblock._network_rule("/^ad[0-9]/"), [])
+
+    def test_badfilter_cancels_in_every_list(self):
+        cancelled = adblock.cancelled_rules("[Adblock]\n||bad.example^$badfilter\n||x.example^$Image,script,badfilter\n")
+        p = adblock.parse("[Adblock]\n||bad.example^\n||x.example^$script,image\n||kept.example^$script\n", cancelled)
+        self.assertEqual(p.domains, set())
+        urls = [r["trigger"]["url-filter"] for r in p.blocks]
+        self.assertEqual(len(urls), 1)
+        self.assertIn("kept", urls[0])
+
+    def test_ghide_turns_off_generic_hiding_only(self):
+        p = adblock.parse("[Adblock]\n##.ad\n/ad-$image\n@@||news.example^$ghide\n@@*$ghide,domain=a.example|b.example\n"
+                          "@@*$ghide,xhr,domain=c.example\n")
+        self.assertEqual(p.ghide, {"*news.example", "*a.example", "*b.example"})
+        rules = adblock.list_rules(p, p.ghide)
+        kinds = [r["action"]["type"] for r in rules]
+        # generic hiding, then the exception (which so undoes nothing else), then the blocking rules
+        self.assertEqual(kinds[:2], ["css-display-none", "ignore-previous-rules"])
+        self.assertEqual(rules[1]["trigger"]["if-domain"], ["*a.example", "*b.example", "*news.example"])
+        self.assertTrue(all(k == "block" for k in kinds[2:]))
+
+    def test_new_rules_compile_in_webkit(self):
+        from gi.repository import GLib, WebKit
+        rules, _ = adblock.convert("[Adblock]\n##.ad\n/ad-\n/frame-$subdocument\n/x-$doc\n@@||n.example^$ghide\n")
+        store = WebKit.UserContentFilterStore.new(tempfile.mkdtemp())
+        loop, out = GLib.MainLoop(), []
+
+        def saved(s, r):
+            try:
+                out.append(s.save_finish(r))
+            except GLib.Error as e:
+                out.append(e.message)
+            loop.quit()
+        store.save("t", GLib.Bytes.new(json.dumps(rules).encode()), None, saved)
+        GLib.timeout_add_seconds(20, loop.quit)
+        loop.run()
+        self.assertIsInstance(out[0], WebKit.UserContentFilter, out)
+
 
 class PageScriptTest(unittest.TestCase):
     """sofa/page.js: the keys its frames talk with (see "talking to other frames" there)."""

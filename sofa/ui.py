@@ -386,11 +386,13 @@ class Menu(Gtk.Box):
                 had = (i, focus is item.close or focus.is_ancestor(item.close))
         while (c := self.tab_strip.get_first_child()) is not None:
             self.tab_strip.remove(c)
-        for i, (title, uri, is_current) in enumerate(tabs):
+        for i, (title, uri, is_current, asleep) in enumerate(tabs):
             item = Gtk.Box(spacing=2)
             item.add_css_class("sofa-tab")
             if is_current:
                 item.add_css_class("sofa-tab-current")
+            if asleep:
+                item.add_css_class("sofa-tab-asleep")
             b = Gtk.Button()
             b.add_css_class("flat")
             inner = Gtk.Box(spacing=10)
@@ -404,7 +406,7 @@ class Menu(Gtk.Box):
             name.set_width_chars(8)
             inner.append(name)
             b.set_child(inner)
-            b.set_tooltip_text(uri or "New tab")
+            b.set_tooltip_text((uri or "New tab") + (" · asleep: it reloads when you go back to it" if asleep else ""))
             b.connect("clicked", lambda _b, n=i: self.on_tab(n))
             close = Gtk.Button.new_from_icon_name("window-close-symbolic")
             close.add_css_class("flat")

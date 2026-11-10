@@ -58,6 +58,10 @@ window.sofa {
   background-color: alpha(currentColor, 0.07);
 }
 
+.sofa-tab-asleep {
+  opacity: 0.55;
+}
+
 .sofa-tab-arrow {
   min-width: 2.4em;
   min-height: 2.4em;

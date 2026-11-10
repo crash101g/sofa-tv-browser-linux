@@ -93,7 +93,8 @@ class TabLimitTest(unittest.TestCase):
 
     def browser_with(self, tabs, unlimited):
         b = browser.Browser.__new__(browser.Browser)
-        b.tabs = [object()] * tabs
+        page = type("V", (), {"get_uri": lambda self: "https://a.example/"})()
+        b.tabs = [type("T", (), {"asleep": False, "view": page})() for _ in range(tabs)]
         b.saved = None
         b.prefs = type("P", (), {"unlimited_tabs": unlimited})()
         return b
@@ -117,6 +118,90 @@ class TabLimitTest(unittest.TestCase):
             self.assertEqual(self.browser_with(6, True).tab_room(), "6 tabs is the limit")
         finally:
             browser.memory, browser.page_memory = real
+
+class SleepTest(unittest.TestCase):
+    class View:
+        def __init__(self, uri="https://a.example/", title="A", loading=False, audio=False):
+            self.uri, self.title, self.loading, self.audio, self.killed = uri, title, loading, audio, 0
+            self.reloads = 0
+
+        def get_uri(self):
+            return None if self.killed else self.uri
+
+        def get_title(self):
+            return None if self.killed else self.title
+
+        def is_loading(self):
+            return self.loading
+
+        def is_playing_audio(self):
+            return self.audio
+
+        def terminate_web_process(self):
+            self.killed += 1
+
+        def reload(self):
+            self.reloads += 1
+
+    def browser_with(self, views, typed=False):
+        b = browser.Browser.__new__(browser.Browser)
+        b.tabs = []
+        for v in views:
+            t = browser.Tab.__new__(browser.Tab)
+            t.view, t.private, t.restore_url, t.restore_title = v, False, None, ""
+            t.asleep = t.waking = t.shares_process = False
+            t.last_used = 0.0
+            b.tabs.append(t)
+        b.current, b.saved = 0, None
+        b.js = lambda code, cb=None, tab=None: cb(typed)
+        b.memory_short = lambda: False
+        return b
+
+    def test_which_sleep(self):
+        V = self.View
+        b = self.browser_with([V(), V(), V(loading=True), V(audio=True), V(uri="about:blank"), V(uri=None), V()])
+        b.tabs[6].shares_process = True
+        b.sleep_unused(60)
+        self.assertEqual([t.asleep for t in b.tabs], [False, True, False, False, False, False, False])
+        t = b.tabs[1]
+        self.assertEqual((t.uri, t.title, t.view.killed), ("https://a.example/", "A", 1))  # kept while asleep
+        b.sleep_unused(60)
+        self.assertEqual(t.view.killed, 1)                                                # once only
+
+    def test_recent_and_typed_stay_awake(self):
+        b = self.browser_with([self.View(), self.View()])
+        b.tabs[1].last_used = browser.time.monotonic()
+        b.sleep_unused(60)
+        self.assertFalse(b.tabs[1].asleep)
+        b = self.browser_with([self.View(), self.View()], typed=True)
+        b.sleep_unused(60)
+        self.assertFalse(b.tabs[1].asleep)
+        self.assertGreater(b.tabs[1].last_used, 0)                                        # asked again later
+        b = self.browser_with([self.View(), self.View()], typed=None)                     # no answer: awake
+        b.sleep_unused(60)
+        self.assertFalse(b.tabs[1].asleep)
+
+    def test_memory_short_sleeps_least_used(self):
+        b = self.browser_with([self.View(), self.View(), self.View(), self.View()])
+        b.tabs[1].last_used, b.tabs[2].last_used, b.tabs[3].last_used = 300.0, 100.0, 200.0
+        b.memory_short = lambda: True
+        b.sleep_unused(10 ** 9)                                                           # none unused that long
+        self.assertEqual([t.asleep for t in b.tabs], [False, False, True, False])
+        self.assertFalse(self.browser_with([self.View()]).make_room())                    # only the tab on screen
+
+    def test_wake(self):
+        b = self.browser_with([self.View(), self.View()])
+        b.sleep_unused(60)
+        t = b.tabs[1]
+        b.ensure_loaded(t)
+        b.ensure_loaded(t)
+        self.assertEqual(t.view.reloads, 1)
+        b.js(None, lambda v: None)                                                        # (the fake page)
+        calls = []
+        real = browser.Browser.js
+        real(b, "1", calls.append, tab=t)                                                 # a sleeping page isn't asked
+        self.assertEqual(calls, [None])
+
 
 class AdBlockTest(unittest.TestCase):
     def test_hosts_file(self):

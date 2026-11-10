@@ -161,7 +161,11 @@ With a firewall on, allow the port: `sudo ufw allow 8765/tcp`. If Avahi is insta
 - **Tabs**: up to six, or with Settings → **No tab limit** as many as you like while memory allows: a new
   tab needs room for one more page (the average of the tabs already open, between 100 MB and 1 GB, or 300 MB to
   start) plus a reserve of 512 MB or 5% of memory, whichever is larger. Free memory is as Linux counts it
-  (MemAvailable, which includes cache it can give back). With two or
+  (MemAvailable, which includes cache it can give back). Tabs you haven't used for 30 minutes go to sleep
+  (Settings → **Sleep unused tabs**: never, or after 15 minutes to 2 hours): Sofa closes their page to free its
+  memory, keeps the address, title and history, and reloads the page when you go back to it. Tabs playing sound,
+  loading, or with text typed and not sent stay awake, and when memory is short the least used tab sleeps first,
+  to make room. Sleeping tabs look dimmed in the menu. With two or
   more, the menu shows them across its top: click or press OK on one to go to
   it, or on its × to close it. When they don't all fit, arrows at either end scroll the row. They are also in Tabs in the menu and in "Open tabs" on Home. Ctrl+T opens a new
   tab at the end, ready to type an address. Right-click a link to open it in a new tab in the background (muted

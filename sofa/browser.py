@@ -30,6 +30,10 @@ TAB_MIN_KB = 100 * 1024
 TAB_MAX_KB = 1024 * 1024
 RESERVE_KB = 512 * 1024
 RESERVE_SHARE = 0.05
+# A tab with text typed into its page and not sent stays awake (see Browser.sleep_tab).
+TYPED_JS = """[...document.querySelectorAll('input, textarea')].some(e => (e.type === 'checkbox' || e.type === 'radio')
+  ? e.checked !== e.defaultChecked : e.type !== 'hidden' && e.type !== 'submit' && e.value !== e.defaultValue)
+  || [...document.querySelectorAll('[contenteditable=""], [contenteditable=true]')].some(e => e.textContent.trim())"""
 MAX_DIALOGS = 2         # alert, confirm and prompt boxes a page may show before the rest are dismissed
 BLOCKED_PAGE = """<!doctype html><meta charset="utf-8"><title>Blocked</title>
 <body style="font:24px system-ui,sans-serif;background:#1e1e1e;color:#eee;display:grid;place-items:center;height:90vh">
@@ -149,6 +153,10 @@ class Tab:
         self.dialogs = 0
         self.keys = {}              # what was last put in its user content manager
         self.opened_by = None       # the tab a right-click opened it from, in the background
+        self.last_used = time.monotonic()  # when it was last the current tab
+        self.asleep = False         # its page process is closed to save memory; shown again, it reloads
+        self.waking = False
+        self.shares_process = False  # a pop-up and its opener share a page process: neither sleeps
 
     @property
     def uri(self):
@@ -244,11 +252,62 @@ class Browser:
         mem = memory()
         if mem is None:  # can't tell: the usual limit, to be safe
             return None if count < MAX_TABS else f"{MAX_TABS} tabs is the limit"
-        total, avail = mem
-        need = tab_need(total, page_memory(), len(self.all_tabs()))
+        avail, need = mem[1], self._tab_need(mem)
         if avail < need:
             return f"Only {size_text(avail)} of memory is free, and a new tab needs about {size_text(need)}"
         return None
+
+    def _tab_need(self, mem):
+        awake = [t for t in self.all_tabs() if not t.asleep and t.view.get_uri()]  # those with a page process
+        return tab_need(mem[0], page_memory(), len(awake))
+
+    def memory_short(self) -> bool:
+        """Less memory free than another tab would need."""
+        mem = memory()
+        return mem is not None and mem[1] < self._tab_need(mem)
+
+    # Sleeping tabs: a tab unused for a while has its page process closed, and reloads when shown again (its
+    # address, title and history stay; WebKit puts the scroll position back).
+    def sleepable(self, tab) -> bool:
+        v, uri = tab.view, tab.view.get_uri() or ""
+        return (tab is not self.tab and not tab.asleep and not tab.shares_process
+                and uri.startswith(("http://", "https://", "file:"))
+                and not v.is_loading() and not v.is_playing_audio())
+
+    def sleep_tab(self, tab, done=None):
+        """Puts [tab] to sleep unless it can't: it is shown, playing sound, loading, or has text typed and not sent."""
+        def answer(typed):
+            ok = typed is False and tab in self.all_tabs() and self.sleepable(tab)
+            if ok:
+                tab.restore_url, tab.restore_title = tab.view.get_uri(), tab.view.get_title() or tab.restore_title
+                tab.asleep = True
+                tab.view.terminate_web_process()
+            else:
+                tab.last_used = time.monotonic()  # asked again later
+            if done:
+                done(tab, ok)
+
+        if self.sleepable(tab):
+            self.js(TYPED_JS, answer, tab=tab)
+        elif done:
+            done(tab, False)
+
+    def sleep_unused(self, after_s, done=None):
+        """Every tab unused for [after_s] seconds goes to sleep; with memory short, also the least recently used."""
+        now = time.monotonic()
+        for t in self.all_tabs():
+            if now - t.last_used >= after_s:
+                self.sleep_tab(t, done)
+        if self.memory_short():
+            self.make_room(done)
+
+    def make_room(self, done=None) -> bool:
+        """The least recently used tab that can sleep goes to sleep. False if there is none."""
+        tabs = sorted((t for t in self.all_tabs() if self.sleepable(t)), key=lambda t: t.last_used)
+        if not tabs:
+            return False
+        self.sleep_tab(tabs[0], done)
+        return True
 
     def can_open_tab(self) -> bool:
         return self.tab_room() is None
@@ -266,10 +325,12 @@ class Browser:
         ucm.connect("script-message-received::sofa", self._on_message)
         if related is not None:
             view = WebKit.WebView(related_view=related.view, user_content_manager=ucm)
+            related.shares_process = True
         else:
             view = WebKit.WebView(network_session=self.private_session if private else self.session,
                                   user_content_manager=ucm)
         tab = Tab(view, private)
+        tab.shares_process = related is not None
         cursors = getattr(self.ui, "cursors", None)
         if cursors is not None:
             cursors.track(view)  # the page's own cursors (a hand over links, a text bar), big
@@ -397,7 +458,13 @@ class Browser:
         tab.view.load_uri(to_url(text, self.prefs.engine))
 
     def ensure_loaded(self, tab):
-        """A tab reopened at start loads its page the first time it is shown."""
+        """A tab reopened at start loads its page the first time it is shown, and a sleeping tab wakes."""
+        tab.last_used = time.monotonic()
+        if tab.asleep:
+            if not tab.waking:
+                tab.waking = True
+                tab.view.reload()
+            return
         if tab.restore_url and not tab.view.get_uri():
             url, tab.restore_url = tab.restore_url, None
             tab.view.load_uri(url)
@@ -413,7 +480,7 @@ class Browser:
     # Script calls
     def js(self, code: str, cb=None, tab=None):
         tab = tab or self.tab
-        if not tab:
+        if not tab or tab.asleep:  # no page to ask (and asking would start its process again)
             if cb:
                 cb(None)
             return
@@ -576,6 +643,9 @@ class Browser:
             return
         uri = view.get_uri() or ""
         if event == WebKit.LoadEvent.STARTED:
+            if tab.asleep:  # awake again
+                tab.asleep = tab.waking = False
+                tab.restore_url = None
             tab.dialogs = 0
             tab.editing = False
             tab.filled = False

@@ -136,6 +136,7 @@ class Window(Adw.ApplicationWindow):
         self.web_stack = Gtk.Stack(hexpand=True, vexpand=True)
         self.web_box.set_child(self.web_stack)
         self._restore_tabs()
+        GLib.timeout_add_seconds(60, self._sleep_tabs)
 
         self.home = Home(self)
         self.lists = ListPage(self)
@@ -345,6 +346,24 @@ class Window(Adw.ApplicationWindow):
         self.browser.current = min(max(int(p.current_tab or 0), 0), len(self.browser.tabs) - 1)
         self.web_stack.set_visible_child(self.browser.view)
 
+    def _sleep_tabs(self):
+        """Once a minute: tabs unused for the time chosen in Settings go to sleep (see Browser.sleep_unused)."""
+        mins = self.prefs.sleep_tabs_after
+        if mins:
+            self.browser.sleep_unused(mins * 60, self._slept)
+        return True
+
+    def _slept(self, tab, ok):
+        if ok and self.menu_open:
+            self._update_menu()  # the tab strip shows it asleep
+
+    def _no_room(self, why, hint):
+        """[why] a tab can't open: with memory short, the least used tab goes to sleep to make room."""
+        if self.prefs.sleep_tabs_after and self.browser.memory_short() and self.browser.make_room(self._slept):
+            self.toast("Memory is short: putting the least used tab to sleep. Try again in a moment", timeout=4)
+        else:
+            self.toast(f"{why}. {hint}", timeout=4)
+
     def _add_view(self, tab):
         self.web_stack.add_child(tab.view)
 
@@ -367,6 +386,8 @@ class Window(Adw.ApplicationWindow):
         if not 0 <= i < len(b.tabs):
             return
         old = b.tab
+        if old is not None:
+            old.last_used = time.monotonic()
         if old is not None and old is not b.tabs[i]:
             b.call("pauseAll", tab=old)  # a tab out of sight stays quiet
             if old.filled:
@@ -376,6 +397,9 @@ class Window(Adw.ApplicationWindow):
         b.current = i
         tab = b.tab
         self.web_stack.set_visible_child(tab.view)
+        tab.last_used = time.monotonic()
+        if tab.asleep:
+            b.ensure_loaded(tab)  # the tab on screen is never asleep
         self.progress.set_visible(tab.view.is_loading())
         tab.view.set_is_muted(False)  # opened in the background, muted until now
         self.on_title(tab, tab.title)
@@ -398,7 +422,7 @@ class Window(Adw.ApplicationWindow):
         b = self.browser
         why = b.tab_room()
         if why:
-            self.toast(f"{why}. Close one in Tabs, in the menu", timeout=4)
+            self._no_room(why, "Close one in Tabs, in the menu")
             return False
         tab = b.make_tab(b.private)
         self._add_view(tab)
@@ -417,7 +441,7 @@ class Window(Adw.ApplicationWindow):
         b = self.browser
         why = b.tab_room()
         if why:
-            self.toast(f"{why}. Close one in the menu", timeout=4)
+            self._no_room(why, "Close one in the menu")
             return
         tab = b.make_tab(b.private)
         tab.view.set_is_muted(True)  # until it is shown
@@ -480,7 +504,7 @@ class Window(Adw.ApplicationWindow):
         items = []
         for i, t in enumerate(b.tabs):
             name = t.title or (host_of(t.uri) or "Home")
-            sub = ("This tab · " if i == b.current else "") + (t.uri or "New tab")
+            sub = ("This tab · " if i == b.current else "Asleep · " if t.asleep else "") + (t.uri or "New tab")
             items.append((name, sub, lambda i=i: self.switch_tab(i)))
         if b.can_open_tab():
             items.append(("New tab", "", lambda: self.new_tab()))
@@ -575,6 +599,8 @@ class Window(Adw.ApplicationWindow):
             self.unfullscreen()
 
     def on_crash(self, tab, reason):
+        if reason == WebKit.WebProcessTerminationReason.TERMINATED_BY_API:
+            return  # put to sleep
         if self._is_current(tab):
             self.toast("The page stopped working. Press Back and Reload to try again.")
 
@@ -862,7 +888,7 @@ class Window(Adw.ApplicationWindow):
         uri = self.browser.tab.uri
         host = host_of(uri)
         self.menu.update({
-            "tab_list": [(t.title, t.uri, i == self.browser.current) for i, t in enumerate(self.browser.tabs)],
+            "tab_list": [(t.title, t.uri, i == self.browser.current, t.asleep) for i, t in enumerate(self.browser.tabs)],
             "tabs": len(self.browser.tabs), "can_add_tab": self.browser.can_open_tab(), "phone": self.phone.running,
             "autoclean": self.prefs.in_set("autoclean_sites", site_of(host)),
             "address": uri, "can_back": v.can_go_back(), "can_forward": v.can_go_forward(),

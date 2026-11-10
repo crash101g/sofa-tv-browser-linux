@@ -18,6 +18,8 @@ THEMES = [("dark", "Dark"), ("light", "Light"), ("system", "As the system")]
 SPEEDS = [(1, "Slow"), (2, "Normal"), (3, "Fast")]
 ZOOMS = [(z, f"{z}%") for z in (67, 75, 90, 100, 110, 125, 150, 175, 200)]
 QUALITIES = [(0, "The screen's"), (2160, "4K"), (1440, "1440p"), (1080, "1080p"), (720, "720p")]
+SLEEP_AFTER = [(0, "Never"), (15, "After 15 minutes"), (30, "After 30 minutes"), (60, "After 1 hour"),
+               (120, "After 2 hours")]
 AUTO_WATCH = [("off", "Off"), ("always", "On every site"), ("sites", "On sites chosen in the menu")]
 
 
@@ -258,6 +260,9 @@ class Settings(Gtk.Box):
         self._switch(g, "unlimited_tabs", "No tab limit",
                      "More than six tabs, as long as there is memory for another page and some to spare",
                      after=a._update_menu)
+        self._combo(g, "sleep_tabs_after", "Sleep unused tabs", SLEEP_AFTER,
+                    "Frees their memory; a sleeping tab reloads when you go back to it. Not tabs playing sound or "
+                    "with typed text, and the oldest goes sooner when memory is short")
         page.add(g)
 
         g = Adw.PreferencesGroup(

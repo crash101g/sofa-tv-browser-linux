@@ -118,6 +118,7 @@ DEFAULTS = {
     "current_tab": 0,
     "restore_tabs": True,
     "unlimited_tabs": False,            # more than six tabs, while memory allows another
+    "sleep_tabs_after": 30,             # minutes unused before a tab's page is closed to save memory; 0: never
     "phone_remote": False,              # the phone page's server; off until "Pair phone"
     "phone_plain_http": False,          # the phone page over plain HTTP, for phones that refuse Sofa's certificate
 }

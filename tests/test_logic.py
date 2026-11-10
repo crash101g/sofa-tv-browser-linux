@@ -56,34 +56,67 @@ class TabLimitTest(unittest.TestCase):
                 f.write(f"MemAvailable:   {avail} kB\nBuffers:        10 kB\n")
         return path
 
-    def test_free_memory(self):
+    def test_memory(self):
         with tempfile.TemporaryDirectory() as d:
-            self.assertAlmostEqual(browser.free_memory(self.meminfo(d, 16000000, 4000000)), 0.25)
-            self.assertIsNone(browser.free_memory(self.meminfo(d, 16000000, None)))   # too old a kernel
-            self.assertIsNone(browser.free_memory(os.path.join(d, "missing")))
-        self.assertIsNotNone(browser.free_memory())                                   # this computer's
+            self.assertEqual(browser.memory(self.meminfo(d, 16000000, 4000000)), (16000000, 4000000))
+            self.assertIsNone(browser.memory(self.meminfo(d, 16000000, None)))      # too old a kernel
+            self.assertIsNone(browser.memory(os.path.join(d, "missing")))
+        self.assertIsNotNone(browser.memory())                                      # this computer's
+
+    def test_page_memory(self):
+        with tempfile.TemporaryDirectory() as d:
+            def proc(pid, ppid, name, pss=None, rss=None):
+                os.makedirs(os.path.join(d, str(pid)))
+                with open(os.path.join(d, str(pid), "stat"), "w") as f:
+                    f.write(f"{pid} ({name}) S {ppid} 1 1\n")
+                if pss is not None:
+                    with open(os.path.join(d, str(pid), "smaps_rollup"), "w") as f:
+                        f.write(f"Rss:  {pss * 2} kB\nPss:  {pss} kB\n")
+                if rss is not None:
+                    with open(os.path.join(d, str(pid), "status"), "w") as f:
+                        f.write(f"Name: x\nVmRSS:  {rss} kB\n")
+            self.assertIsNone(browser.page_memory(100, d))
+            proc(100, 1, "python3")
+            proc(101, 100, "bwrap")
+            proc(102, 101, "WebKitWebProces", pss=200000)      # in the sandbox
+            proc(103, 100, "WebKitWebProces", rss=50000)       # no smaps_rollup: resident size
+            proc(104, 100, "WebKitNetworkPr", pss=90000)       # not a page
+            proc(105, 1, "WebKitWebProces", pss=70000)         # another browser's
+            self.assertEqual(browser.page_memory(100, d), 250000)
+
+    def test_tab_need(self):
+        gb = 1024 * 1024
+        self.assertEqual(browser.tab_need(8 * gb, None, 0), 300 * 1024 + 512 * 1024)      # a guess, the 512 MB floor
+        self.assertEqual(browser.tab_need(32 * gb, 2 * gb, 4), 512 * 1024 + 32 * gb // 20)  # 5% of a big computer
+        self.assertEqual(browser.tab_need(8 * gb, 9 * gb, 3), gb + 512 * 1024)              # a page counts 1 GB at most
+        self.assertEqual(browser.tab_need(8 * gb, 1000, 3), 100 * 1024 + 512 * 1024)        # and 100 MB at least
 
     def browser_with(self, tabs, unlimited):
         b = browser.Browser.__new__(browser.Browser)
         b.tabs = [object()] * tabs
+        b.saved = None
         b.prefs = type("P", (), {"unlimited_tabs": unlimited})()
         return b
 
     def test_room(self):
-        real = browser.free_memory
+        gb = 1024 * 1024
+        real = browser.memory, browser.page_memory
         try:
-            browser.free_memory = lambda: 0.60
+            browser.page_memory = lambda: 2 * gb                                     # 2 GB of pages
+            browser.memory = lambda: (8 * gb, 6 * gb)
             self.assertIsNone(self.browser_with(5, False).tab_room())
             self.assertEqual(self.browser_with(6, False).tab_room(), "6 tabs is the limit")
             self.assertIsNone(self.browser_with(40, True).tab_room())                # no limit, memory to spare
-            browser.free_memory = lambda: 0.249
-            self.assertIn("25%", self.browser_with(2, True).tab_room())               # short of memory
+            browser.memory = lambda: (8 * gb, gb)                                    # 1 GB free
+            self.assertIsNone(self.browser_with(10, True).tab_room())                # 200 MB pages: room
+            msg = self.browser_with(2, True).tab_room()                              # 1 GB pages: not
+            self.assertEqual(msg, "Only 1.0 GB of memory is free, and a new tab needs about 1.5 GB")
             self.assertIsNone(self.browser_with(5, False).tab_room())                 # the usual limit ignores it
-            browser.free_memory = lambda: None
+            browser.memory = lambda: None
             self.assertIsNone(self.browser_with(5, True).tab_room())                  # can't tell: six
             self.assertEqual(self.browser_with(6, True).tab_room(), "6 tabs is the limit")
         finally:
-            browser.free_memory = real
+            browser.memory, browser.page_memory = real
 
 class AdBlockTest(unittest.TestCase):
     def test_hosts_file(self):

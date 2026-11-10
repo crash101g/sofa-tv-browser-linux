@@ -158,8 +158,10 @@ With a firewall on, allow the port: `sudo ufw allow 8765/tcp`. If Avahi is insta
   Home, history, bookmarks, downloads, ad blocking, Clean up, Remove element, "Allow once", Watch by itself,
   "Browse as" desktop, mobile, TV or WebKit, scroll mode, pointer on or off per site, zoom, full screen, the phone
   remote, settings, and Exit (closes Sofa, like Ctrl+Q). The buttons wrap onto as many rows as the screen needs, so nothing is hidden off to the side.
-- **Tabs**: up to six, or with Settings → **No tab limit** as many as you like while at least a quarter of the
-  computer's memory is free (as Linux counts it: MemAvailable, which includes cache it can give back). With two or
+- **Tabs**: up to six, or with Settings → **No tab limit** as many as you like while memory allows: a new
+  tab needs room for one more page (the average of the tabs already open, between 100 MB and 1 GB, or 300 MB to
+  start) plus a reserve of 512 MB or 5% of memory, whichever is larger. Free memory is as Linux counts it
+  (MemAvailable, which includes cache it can give back). With two or
   more, the menu shows them across its top: click or press OK on one to go to
   it, or on its × to close it. They are also in Tabs in the menu and in "Open tabs" on Home. Ctrl+T opens a new
   tab at the end, ready to type an address. Right-click a link to open it in a new tab in the background (muted

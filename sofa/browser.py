@@ -23,7 +23,13 @@ WORLD = "sofa"
 GESTURE_S = 1.5         # a window or navigation this soon after a press counts as the user's
 ALLOW_ONCE_S = 60.0
 MAX_TABS = 6            # unless "No tab limit" is on: then as many as memory allows
-MIN_FREE_MEMORY = 0.25  # with no tab limit, a new tab needs this share of the computer's memory free
+# With no tab limit, a new tab needs room for one more page (TAB_GUESS_KB until tabs are open to measure, at most
+# TAB_MAX_KB) on top of a reserve for the rest of the computer: RESERVE_KB, or RESERVE_SHARE of memory if more.
+TAB_GUESS_KB = 300 * 1024
+TAB_MIN_KB = 100 * 1024
+TAB_MAX_KB = 1024 * 1024
+RESERVE_KB = 512 * 1024
+RESERVE_SHARE = 0.05
 MAX_DIALOGS = 2         # alert, confirm and prompt boxes a page may show before the rest are dismissed
 BLOCKED_PAGE = """<!doctype html><meta charset="utf-8"><title>Blocked</title>
 <body style="font:24px system-ui,sans-serif;background:#1e1e1e;color:#eee;display:grid;place-items:center;height:90vh">
@@ -54,10 +60,9 @@ def to_url(text: str, engine) -> str:
     return engine.search_url(t)
 
 
-def free_memory(path="/proc/meminfo"):
+def memory(path="/proc/meminfo"):
     """
-    The share of memory still free for programs: MemAvailable / MemTotal, which counts the cache Linux would give
-    back. None if it can't be read.
+    (MemTotal, MemAvailable) in kB: MemAvailable counts the cache Linux would give back. None if it can't be read.
     """
     vals = {}
     try:
@@ -69,7 +74,62 @@ def free_memory(path="/proc/meminfo"):
     except (OSError, ValueError, IndexError):
         return None
     total, avail = vals.get("MemTotal"), vals.get("MemAvailable")
-    return avail / total if total and avail is not None else None
+    return (total, avail) if total and avail is not None else None
+
+
+def _proc_kb(proc, pid):
+    """A process's memory in kB: its proportional share (Pss), or its resident size if that can't be read."""
+    for name, key in (("smaps_rollup", "Pss:"), ("status", "VmRSS:")):
+        try:
+            with open(os.path.join(proc, pid, name), encoding="ascii", errors="replace") as f:
+                for line in f:
+                    if line.startswith(key):
+                        return int(line.split()[1])
+        except (OSError, ValueError, IndexError):
+            pass
+    return 0
+
+
+def page_memory(root=None, proc="/proc"):
+    """
+    The memory in kB of the WebKit page processes Sofa started (through the sandbox too), or None if there are none.
+    """
+    root = str(root or os.getpid())
+    children, names = {}, {}
+    try:
+        pids = [p for p in os.listdir(proc) if p.isdigit()]
+    except OSError:
+        return None
+    for pid in pids:
+        try:
+            with open(os.path.join(proc, pid, "stat"), encoding="ascii", errors="replace") as f:
+                stat = f.read()
+        except OSError:
+            continue
+        head, _, rest = stat.rpartition(")")
+        fields = rest.split()
+        if len(fields) < 2:
+            continue
+        names[pid] = head.partition("(")[2]
+        children.setdefault(fields[1], []).append(pid)
+    total, found, todo = 0, False, list(children.get(root, []))
+    while todo:
+        pid = todo.pop()
+        todo.extend(children.get(pid, []))
+        if names.get(pid, "").startswith("WebKitWebProces"):  # the name is cut at 15 characters
+            total += _proc_kb(proc, pid)
+            found = True
+    return total if found else None
+
+
+def tab_need(total_kb, used_kb, tabs):
+    """The free memory in kB a new tab needs: room for an average page so far, and the reserve."""
+    per_tab = TAB_GUESS_KB if not used_kb or not tabs else min(max(used_kb // tabs, TAB_MIN_KB), TAB_MAX_KB)
+    return per_tab + max(RESERVE_KB, int(total_kb * RESERVE_SHARE))
+
+
+def size_text(kb):
+    return f"{kb / 1048576:.1f} GB" if kb >= 1048576 else f"{kb // 1024} MB"
 
 
 class Tab:
@@ -177,15 +237,17 @@ class Browser:
         return self.tabs + (self.saved[0] if self.saved else [])
 
     def tab_room(self) -> str | None:
-        """None if another tab may open, or why not: six at most, or with "No tab limit" a quarter of memory free."""
+        """None if another tab may open, or why not: six at most, or with "No tab limit" while memory allows."""
         count = len(self.tabs)
         if not self.prefs.unlimited_tabs:
             return None if count < MAX_TABS else f"{MAX_TABS} tabs is the limit"
-        free = free_memory()
-        if free is None:  # can't tell: the usual limit, to be safe
+        mem = memory()
+        if mem is None:  # can't tell: the usual limit, to be safe
             return None if count < MAX_TABS else f"{MAX_TABS} tabs is the limit"
-        if free < MIN_FREE_MEMORY:
-            return f"Only {free:.0%} of memory is free, and a new tab needs {MIN_FREE_MEMORY:.0%}"
+        total, avail = mem
+        need = tab_need(total, page_memory(), len(self.all_tabs()))
+        if avail < need:
+            return f"Only {size_text(avail)} of memory is free, and a new tab needs about {size_text(need)}"
         return None
 
     def can_open_tab(self) -> bool:

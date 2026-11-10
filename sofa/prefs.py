@@ -117,7 +117,7 @@ DEFAULTS = {
     "tabs": [],                         # the open tabs, reopened at the next start: [{"url", "title"}]
     "current_tab": 0,
     "restore_tabs": True,
-    "unlimited_tabs": False,            # more than six tabs, while a quarter of memory is free
+    "unlimited_tabs": False,            # more than six tabs, while memory allows another
     "phone_remote": False,              # the phone page's server; off until "Pair phone"
     "phone_plain_http": False,          # the phone page over plain HTTP, for phones that refuse Sofa's certificate
 }

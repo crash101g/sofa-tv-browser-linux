@@ -58,6 +58,12 @@ window.sofa {
   background-color: alpha(currentColor, 0.07);
 }
 
+.sofa-tab-arrow {
+  min-width: 2.4em;
+  min-height: 2.4em;
+  background-color: alpha(currentColor, 0.12);
+}
+
 .sofa-tab-current {
   background-color: alpha(@accent_bg_color, 0.45);
 }

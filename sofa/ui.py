@@ -262,11 +262,25 @@ class Menu(Gtk.Box):
         self.on_tab, self.on_close_tab = on_tab, on_close_tab
         self.tab_strip = Gtk.Box(spacing=10, margin_start=8, margin_end=8, margin_top=4, margin_bottom=4)
         self.tab_scroll = Gtk.ScrolledWindow(propagate_natural_height=True)
-        self.tab_scroll.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.NEVER)
+        # Scrolls sideways, with no scroll bar: the arrows show where more tabs are.
+        self.tab_scroll.set_policy(Gtk.PolicyType.EXTERNAL, Gtk.PolicyType.NEVER)
         self.tab_scroll.set_child(self.tab_strip)
-        self.tab_scroll.set_visible(False)
-        self.append(self.tab_scroll)
+        self.tab_scroll.set_hexpand(True)
+        # Arrows either side when the tabs don't all fit: each scrolls the strip most of its width.
+        self.tab_left = self._tab_arrow("go-previous-symbolic", "Earlier tabs", -1)
+        self.tab_right = self._tab_arrow("go-next-symbolic", "Later tabs", 1)
+        self.tab_row = Gtk.Box(spacing=6)
+        self.tab_row.append(self.tab_left)
+        self.tab_row.append(self.tab_scroll)
+        self.tab_row.append(self.tab_right)
+        self.tab_row.set_visible(False)
+        self.append(self.tab_row)
+        adj = self.tab_scroll.get_hadjustment()
+        adj.connect("changed", lambda _a: self._strip_resized())
+        adj.connect("value-changed", lambda _a: self._update_arrows())
+        self._update_arrows()
         self._tabs_key = None
+        self._current_tab = None  # kept in view when the strip changes size (the arrows coming, say)
         self.address = Gtk.Button()
         ab = Gtk.Box(spacing=14)
         ab.append(Gtk.Image.new_from_icon_name("system-search-symbolic"))
@@ -402,13 +416,73 @@ class Menu(Gtk.Box):
             item.append(close)
             item.tab, item.close = b, close
             self.tab_strip.append(item)
-        self.tab_scroll.set_visible(len(tabs) > 1)
+        self.tab_row.set_visible(len(tabs) > 1)
+        current = next((i for i, t in enumerate(tabs) if t[2]), None)
+        self._current_tab = current if len(tabs) > 1 else None
+        if self._current_tab is not None:
+            self.tab_strip.add_tick_callback(lambda *_a: self._show_tab(current))
         if had is not None and len(tabs) > 1:
             items = list(self._tab_items())
             item = items[min(had[0], len(items) - 1)]
             (item.close if had[1] else item.tab).grab_focus()
         elif had is not None:
             self.buttons["home"].grab_focus()
+
+    def _tab_arrow(self, icon_name, tip, direction):
+        b = Gtk.Button.new_from_icon_name(icon_name)
+        b.add_css_class("sofa-tab-arrow")
+        b.add_css_class("circular")
+        b.set_valign(Gtk.Align.CENTER)
+        b.set_tooltip_text(tip)
+        b.connect("clicked", lambda _b: self._scroll_tabs(direction))
+        return b
+
+    def _scroll_tabs(self, direction):
+        adj = self.tab_scroll.get_hadjustment()
+        top = adj.get_upper() - adj.get_page_size()
+        adj.set_value(min(max(adj.get_value() + direction * adj.get_page_size() * 0.8, 0), top))
+
+    def _strip_resized(self):
+        self._update_arrows()
+        if self._current_tab is not None:
+            self._show_tab(self._current_tab)
+
+    def _update_arrows(self):
+        """
+        While the tabs overflow, an arrow on each side with more tabs. At an end its arrow goes, but keeps its place,
+        so the tabs don't shift; if it had the focus, the tab at that end gets it.
+        """
+        adj = self.tab_scroll.get_hadjustment()
+        top = adj.get_upper() - adj.get_page_size()
+        items = list(self._tab_items())
+        for b, more, edge in ((self.tab_left, adj.get_value() > 10, items[:1]),
+                              (self.tab_right, adj.get_value() < top - 10, items[-1:])):
+            b.set_visible(top > 1)
+            had_focus = b.has_focus()
+            b.set_opacity(1.0 if more else 0.0)
+            b.set_can_target(more)
+            b.set_can_focus(more)
+            if had_focus and not more and edge:
+                edge[0].tab.grab_focus()
+
+    def _show_tab(self, index):
+        """Scrolls the strip so tab [index] is in view, once it has its place (a tick callback: runs when shown)."""
+        items = list(self._tab_items())
+        if index >= len(items):
+            return GLib.SOURCE_REMOVE
+        item = items[index]
+        if item.get_width() <= 0:
+            return GLib.SOURCE_CONTINUE
+        ok, bounds = item.compute_bounds(self.tab_strip)
+        if not ok:
+            return GLib.SOURCE_CONTINUE
+        adj = self.tab_scroll.get_hadjustment()
+        x, w, page = bounds.get_x(), bounds.get_width(), adj.get_page_size()
+        if x < adj.get_value():
+            adj.set_value(max(x - 8, 0))
+        elif x + w > adj.get_value() + page:
+            adj.set_value(min(x + w + 8 - page, adj.get_upper() - page))
+        return GLib.SOURCE_REMOVE
 
     def _tab_items(self):
         c = self.tab_strip.get_first_child()
